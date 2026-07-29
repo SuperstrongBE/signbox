@@ -36,6 +36,7 @@ import { evaluatePolicy } from "../core/policy/engine.js";
 import { ValidationError } from "../core/errors.js";
 import { parseSignRequest, type SignRequestJson, type SignResponseJson } from "./protocol.js";
 import { NonceCache } from "./nonceCache.js";
+import type { QuotaJournal } from "./quotaJournal.js";
 
 export interface AgentRuntime {
   agent: string;
@@ -66,6 +67,11 @@ export interface DaemonDependencies {
   decode: (input: unknown, context: ChainContext) => DecodedTransaction;
   /** Path-1 signing seam (§5.5). Called only after an allow decision. */
   signer: TransactionSigner;
+  /**
+   * Stateful quota journal (§8.5). Without it, any policy demanding
+   * stateful limits refuses with QUOTA_UNAVAILABLE — fail closed.
+   */
+  quotas?: QuotaJournal;
   /** Injectable clock for tests. */
   now?: () => number;
 }
@@ -255,18 +261,44 @@ export class SignBoxDaemon {
         return deny(decision.code, decision.safeReason, decision.policyVersion);
       }
 
-      // Stateful limits require the quota journal (task: SQLite reserve/commit).
-      // Until it is wired in, any demand refuses — fail closed (§8.5).
+      // Stateful limits: reserve atomically BEFORE signing (§13, §15.6).
+      // Without a journal, any demand refuses — fail closed (§8.5).
+      let reservationId: string | undefined;
       if (quotaDemands.length > 0) {
-        return deny(
-          "QUOTA_UNAVAILABLE",
-          "policy requires stateful limits that are not available",
-          decision.policyVersion,
-        );
+        const quotas = this.deps.quotas;
+        if (quotas === undefined) {
+          return deny(
+            "QUOTA_UNAVAILABLE",
+            "policy requires stateful limits that are not available",
+            decision.policyVersion,
+          );
+        }
+        const reserved = quotas.reserve(runtime.agent, quotaDemands, now);
+        if (!reserved.ok) {
+          return deny(
+            reserved.reason === "ambiguous" ? "AMBIGUOUS_VALUE" : "LIMIT_EXCEEDED",
+            "a stateful policy limit refuses this transaction",
+            decision.policyVersion,
+          );
+        }
+        reservationId = reserved.reservationId;
       }
 
       // Sign exactly what was validated (INV-014: nothing mutated in between).
-      const signed = await this.deps.signer.sign(decoded, runtime.key);
+      // A failed signing releases the reservation: unused quota is returned.
+      let signed;
+      try {
+        signed = await this.deps.signer.sign(decoded, runtime.key);
+      } catch (error) {
+        if (reservationId !== undefined) {
+          this.deps.quotas?.release(reservationId);
+        }
+        throw error;
+      }
+      if (reservationId !== undefined) {
+        this.deps.quotas?.commit(reservationId, runtime.agent, signed.transactionDigest);
+      }
+
       const response: SignResponseJson = {
         requestId: request.requestId,
         status: "signed",
