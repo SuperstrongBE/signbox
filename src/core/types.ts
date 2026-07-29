@@ -55,6 +55,10 @@ export type DenyCode =
   | "AMBIGUOUS_VALUE"
   | "POLICY_UNAVAILABLE"
   | "AGENT_DISABLED"
+  | "UNAUTHENTICATED"
+  | "REQUEST_EXPIRED"
+  | "NONCE_REUSED"
+  | "QUOTA_UNAVAILABLE"
   | "INTERNAL_ERROR";
 
 /**
@@ -92,6 +96,23 @@ export interface KeyHandle {
  */
 export interface KeyBackend {
   readonly kind: "encrypted-file" | "os-keystore" | "pkcs11" | "hardware";
+}
+
+/** Result of a successful signing call (path 1, §5.5). */
+export interface SignedTransactionResult {
+  signature: string;
+  transactionDigest: string;
+  signedTransaction?: unknown;
+}
+
+/**
+ * Seam between the daemon and the chain-specific signing mechanics
+ * (path 1, §5.5 — delegated to @proton/js for XPR). The daemon calls this
+ * ONLY after an allow decision, with exactly the validated transaction:
+ * nothing is mutated between the decision and this call (INV-014).
+ */
+export interface TransactionSigner {
+  sign(tx: DecodedTransaction, key: KeyHandle): Promise<SignedTransactionResult>;
 }
 
 /**
