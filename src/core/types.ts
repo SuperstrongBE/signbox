@@ -37,7 +37,16 @@ export interface DecodedAction {
 
 export interface DecodedTransaction {
   context: ChainContext;
+  /** Normalized, chain-agnostic view — what the policy engine evaluates. */
   actions: DecodedAction[];
+  /**
+   * The validated original input, in the chain's native JSON vocabulary,
+   * detached from the caller (deep-cloned). This is what the signer hands
+   * to the chain package, so the signed bytes derive from EXACTLY the JSON
+   * that was validated (INV-014). Present when produced by a ChainAdapter;
+   * a signer must refuse a transaction without it.
+   */
+  source?: unknown;
 }
 
 export type ExportPolicy = "non-exportable" | "encrypted-backup-only";

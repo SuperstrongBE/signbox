@@ -162,5 +162,8 @@ export function decodeXprTransaction(input: unknown, context: ChainContext): Dec
     data: normalizeValue(action.data, 0) as Record<string, unknown>,
   }));
 
-  return { context, actions };
+  // Detach the validated original from the caller: the signer serializes
+  // from this exact structure, and nothing the caller does afterwards can
+  // mutate what gets signed (INV-014).
+  return { context, actions, source: structuredClone(tx) };
 }
