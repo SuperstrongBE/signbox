@@ -52,6 +52,12 @@ export interface AgentRuntime {
 
 export interface DaemonConfig {
   socketPath: string;
+  /**
+   * Administration socket (§12.3): distinct from the request socket, always
+   * 0600 (daemon user only). Carries the kill-switch and status commands
+   * (§14.6). Omit to disable remote administration entirely.
+   */
+  adminSocketPath?: string;
   /** Socket file mode. 0600 (same-user dev) by default; 0660 with a dedicated group in production. */
   socketMode?: number;
   /** Maximum accepted request line size. */
@@ -61,6 +67,15 @@ export interface DaemonConfig {
   /** Tolerated clock skew for requestedAt in the future. */
   maxClockSkewMs?: number;
 }
+
+export type AdminCommand =
+  | { command: "status" }
+  | { command: "disable"; agent: string }
+  | { command: "enable"; agent: string };
+
+export type AdminResponse =
+  | { ok: true; agents?: { agent: string; enabled: boolean; policyVersion: number }[] }
+  | { ok: false; error: string };
 
 export interface DaemonDependencies {
   /** ChainAdapter decode seam (INV-014 enforcement lives there). */
@@ -86,9 +101,11 @@ const DEFAULTS = {
 export class SignBoxDaemon {
   private readonly agents = new Map<string, AgentRuntime>();
   private readonly nonces = new NonceCache();
-  private readonly cfg: Required<DaemonConfig>;
+  private readonly cfg: Required<Omit<DaemonConfig, "adminSocketPath">> &
+    Pick<DaemonConfig, "adminSocketPath">;
   private readonly now: () => number;
   private server: Server | undefined;
+  private adminServer: Server | undefined;
 
   constructor(
     config: DaemonConfig,
@@ -118,6 +135,15 @@ export class SignBoxDaemon {
 
   async start(): Promise<void> {
     if (this.server !== undefined) return;
+    // Unix socket paths are limited to ~104 bytes (macOS) / ~108 (Linux);
+    // beyond that the kernel may bind a TRUNCATED path. Fail loudly instead.
+    for (const path of [this.cfg.socketPath, this.cfg.adminSocketPath]) {
+      if (path !== undefined && Buffer.byteLength(path, "utf8") > 100) {
+        throw new ValidationError(
+          `socket path exceeds the safe unix socket length (100 bytes): ${path}`,
+        );
+      }
+    }
     if (existsSync(this.cfg.socketPath)) {
       // Fail closed rather than silently hijacking another daemon's socket.
       throw new ValidationError(
@@ -134,6 +160,26 @@ export class SignBoxDaemon {
     });
     chmodSync(this.cfg.socketPath, this.cfg.socketMode);
     this.server = server;
+
+    const adminPath = this.cfg.adminSocketPath;
+    if (adminPath !== undefined) {
+      if (existsSync(adminPath)) {
+        await this.stop();
+        throw new ValidationError(`admin socket path already exists: ${adminPath}`);
+      }
+      const adminServer = createServer((socket) => this.handleAdminConnection(socket));
+      await new Promise<void>((resolve, reject) => {
+        adminServer.once("error", reject);
+        adminServer.listen(adminPath, () => {
+          adminServer.removeListener("error", reject);
+          resolve();
+        });
+      });
+      // The admin socket is ALWAYS restricted to the daemon user (§12.3):
+      // it carries the kill-switch, never agent traffic.
+      chmodSync(adminPath, 0o600);
+      this.adminServer = adminServer;
+    }
   }
 
   async stop(): Promise<void> {
@@ -145,6 +191,70 @@ export class SignBoxDaemon {
       unlinkSync(this.cfg.socketPath);
     } catch {
       /* already gone */
+    }
+    const adminServer = this.adminServer;
+    if (adminServer !== undefined) {
+      this.adminServer = undefined;
+      await new Promise<void>((resolve) => adminServer.close(() => resolve()));
+      try {
+        if (this.cfg.adminSocketPath !== undefined) unlinkSync(this.cfg.adminSocketPath);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+
+  private handleAdminConnection(socket: Socket): void {
+    let buffered = "";
+    socket.setEncoding("utf8");
+    socket.on("error", () => socket.destroy());
+    socket.on("data", (chunk: string) => {
+      buffered += chunk;
+      if (Buffer.byteLength(buffered, "utf8") > 4096) {
+        socket.destroy();
+        return;
+      }
+      let newlineIndex = buffered.indexOf("\n");
+      while (newlineIndex !== -1) {
+        const line = buffered.slice(0, newlineIndex);
+        buffered = buffered.slice(newlineIndex + 1);
+        if (line.trim().length > 0) {
+          const response = this.handleAdminCommand(line);
+          if (!socket.destroyed) socket.write(JSON.stringify(response) + "\n");
+        }
+        newlineIndex = buffered.indexOf("\n");
+      }
+    });
+  }
+
+  /** Administration commands (§14.6). Exposed for direct testing. */
+  handleAdminCommand(line: string): AdminResponse {
+    let parsed: AdminCommand;
+    try {
+      parsed = JSON.parse(line) as AdminCommand;
+    } catch {
+      return { ok: false, error: "invalid admin command" };
+    }
+    switch (parsed.command) {
+      case "status":
+        return {
+          ok: true,
+          agents: [...this.agents.values()].map((runtime) => ({
+            agent: runtime.agent,
+            enabled: runtime.enabled,
+            policyVersion: runtime.policyVersion,
+          })),
+        };
+      case "disable":
+        if (!this.agents.has(parsed.agent)) return { ok: false, error: "unknown agent" };
+        this.disableAgent(parsed.agent);
+        return { ok: true };
+      case "enable":
+        if (!this.agents.has(parsed.agent)) return { ok: false, error: "unknown agent" };
+        this.enableAgent(parsed.agent);
+        return { ok: true };
+      default:
+        return { ok: false, error: "unsupported admin command" };
     }
   }
 
