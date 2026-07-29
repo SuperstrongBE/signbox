@@ -7,6 +7,8 @@
 **Concept author:** Rockerone / Railgun ecosystem
 
 > **v0.2 → v0.3:** "black box" model made explicit (§1.1); new invariant INV-014 "unserialized JSON input only"; explicit separation of the two signing paths (§5.5); `packedTransaction` removed from the API (§12.1); actual role of the contract reframed (§7.5); canonicalization pinned (§8.6); quotas declared best-effort (§8.5); anti-rollback and local kill-switch (§14.5–14.6); mandatory peer credentials (§12.3); exhaustive field inspection (§15.5).
+>
+> **v0.3.1:** §12.3 reworked into **layered local authentication** — Node.js does not expose `SO_PEERCRED`/`getpeereid`, so the MVP proves caller identity through token-file possession (a userspace equivalent), and the native kernel-level peer-credential check becomes an additional Phase 2 hardening layer. `token` field added to `SignRequest` (§12.1).
 
 ---
 
@@ -1067,6 +1069,7 @@ interface SignRequest {
   requestedAt: string;
   expiresAt: string;
   nonce: string;
+  token: string; // rotating local token (§12.3), compared in constant time
 }
 ```
 
@@ -1100,11 +1103,14 @@ Do not rely solely on the agent name in the JSON.
 
 Use at minimum:
 
-- OS socket permissions;
-- **mandatory peer credentials** (`SO_PEERCRED` on Linux, `getpeereid` on macOS): the peer process UID is verified on every connection. This check is the pivot of the isolation model (§5.1), not an option;
-- rotating local token;
+- OS socket permissions (the socket file and its directory are only reachable by the daemon user and the authorized agent group);
+- **caller identity proof, in two layers**:
+  1. **MVP — token-file possession.** The daemon issues a rotating local token stored in a file readable ONLY by the agent's OS user (mode `0400`). Every request carries the token; the daemon compares it in constant time. Possession proves the caller can read that file — i.e. runs as that user — which is the same fact peer credentials attest, proven indirectly. This is the classic cookie-file pattern (Tor control port, Erlang distribution).
+  2. **Phase 2 hardening — native peer credentials.** Node.js does not expose `SO_PEERCRED` (Linux) / `getpeereid` (macOS); reading the peer UID requires a small native binding. Once available, the kernel-level check runs on every connection as an ADDITIONAL layer — it complements the token, it does not replace it.
 - anti-replay nonce;
 - strict expiration.
+
+The residual gap of the token layer alone: a token is a secret, so a copy leaked outside the agent's user context (log, backup) could be used by another LOCAL process until rotation — a scenario already narrowed by the socket permissions and bounded in time by rotation. Kernel peer credentials are a fact, not a secret, and close that gap.
 
 The token and nonce protect against replay by a third party; they do not protect against the agent itself, which legitimately holds them. The barrier against a compromised agent is OS isolation and the policy, not the token.
 
@@ -1384,6 +1390,7 @@ The journal may be hash-chained to detect tampering.
 
 - systemd service;
 - dedicated OS user;
+- native peer-credential binding (`SO_PEERCRED`/`getpeereid`) as an additional authentication layer (§12.3);
 - RPC quorum;
 - signed updates;
 - fuzzing;
@@ -1442,7 +1449,7 @@ The journal may be hash-chained to detect tampering.
 - **Canonicalization: RFC 8785; amounts as integers of minimal units, never floating point (§8.6).**
 - **Quotas: best-effort local guarantee; any absolute cap lives on-chain (§8.5).**
 - **Policy cache: anti-rollback through monotonic version; local kill-switch for incident response (§14.5–14.6).**
-- **Local authentication: mandatory peer credentials (§12.3).**
+- **Local authentication: layered — token-file possession in the MVP, native kernel peer credentials added in Phase 2 (§12.3).**
 - **Multichain: `ChainAdapter` contract from V1, a single XPR implementation.**
 - **Rust: postponed; interfaces prepared for a future native backend.**
 
