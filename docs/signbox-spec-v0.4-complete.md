@@ -1066,6 +1066,15 @@ All these commands accept the transaction **only as unserialized JSON** (INV-014
 - `explain` is rate-limited;
 - neither `explain` nor `safeReason` reveal the exact values of thresholds, lists or rules — only a refusal category.
 
+### 11.6.1 Read-only agent surfaces (identity + chain relay)
+
+An agent talks only to the daemon socket and has no RPC of its own. Two read-only operations ride the same authenticated socket (same rotating token, §12.3), and **never** touch policy, quota, or the signer:
+
+- **`whoami`** (`signbox agent whoami`): returns the agent's own public identity — account, permission, public key, chain/network. It answers the practical "what account should I be funded on?" without the agent needing to be told out-of-band. It never returns key material.
+- **`query`** (`signbox chain query` / `chain balance` / `chain abi`): a relay to a **strict allow-list of read-only** chain methods (`get_account`, `get_currency_balance`, `get_table_rows`, `get_abi`, …) through the daemon's pinned endpoints (INV-009). It lets the agent read balances, accounts, tables, and ABIs (to see how an action is shaped) using clear on-chain data.
+
+The relay is explicitly **outside the signing trust boundary**: it can never submit or compute a transaction (`push_transaction`, `send_transaction`, read-only/compute tx are refused), so the policy gate cannot be bypassed through it (INV-011). A hijacked agent gains, at most, the ability to *read* public chain data it could already read elsewhere. Endpoints are operator config, not agent-controlled, so the relay is not an SSRF surface.
+
 ### 11.7 Documentation and agent surfaces
 
 SignBox must ship from the MVP:

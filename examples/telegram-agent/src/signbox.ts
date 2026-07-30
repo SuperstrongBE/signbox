@@ -121,6 +121,31 @@ function explainDeny(code: string, safeReason: string): string {
   }
 }
 
+/** Ask the daemon who this agent is (account, permission, public key, network). */
+export async function whoami(cfg: SignboxConfig): Promise<Record<string, unknown>> {
+  const args = ["agent", "whoami", "--agent", cfg.agent];
+  if (cfg.configPath) args.push("--config", cfg.configPath);
+  const { stdout, stderr, spawnError } = await run(cfg.bin, args);
+  if (spawnError === "ENOENT") return { ok: false, error: "signbox CLI not found (set SIGNBOX_BIN)" };
+  const parsed = safeJson(stdout);
+  return isRecord(parsed) ? parsed : { ok: false, error: stderr.trim() || "whoami failed" };
+}
+
+/** Read public chain data through the read-only relay (get_currency_balance, get_abi, …). */
+export async function chainQuery(
+  cfg: SignboxConfig,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  const args = ["chain", "query", "--agent", cfg.agent, "--method", method, "--params", JSON.stringify(params ?? {})];
+  if (cfg.configPath) args.push("--config", cfg.configPath);
+  const { stdout, stderr, spawnError } = await run(cfg.bin, args);
+  console.log(`[signbox] query ${method} ${JSON.stringify(params)} | ${stdout.trim() || stderr.trim() || "(no output)"}`);
+  if (spawnError === "ENOENT") return { ok: false, error: "signbox CLI not found (set SIGNBOX_BIN)" };
+  const parsed = safeJson(stdout);
+  return parsed ?? { ok: false, error: stderr.trim() || "query failed" };
+}
+
 function receiptId(broadcast: Record<string, unknown> | undefined): string | undefined {
   const receipt = broadcast?.["receipt"] as Record<string, unknown> | undefined;
   const id = receipt?.["transaction_id"];

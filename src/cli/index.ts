@@ -40,7 +40,7 @@ import { SignBoxError } from "../core/errors.js";
 import { DEFAULT_CONFIG_PATH, expandPath, loadConfig, chainContextOf } from "./config.js";
 import { promptPassphrase } from "./passphrase.js";
 import { isInteractive, promptText, promptSelect, validateAccountName } from "./prompt.js";
-import { adminCommand, readToken, signViaDaemon } from "./client.js";
+import { adminCommand, readToken, readViaDaemon, signViaDaemon } from "./client.js";
 import { startDaemonFromConfig, discoverKeystores } from "./daemonRunner.js";
 import { AuditLog } from "../daemon/auditLog.js";
 import type { ChainContext } from "../core/types.js";
@@ -373,6 +373,108 @@ async function pushSigned(
   });
 }
 
+// ----------------------------------------------------------------- chain
+
+/** Parse a --params flag into a JSON object, or fail. */
+function parseParamsFlag(json: string): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(json);
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+  } catch {
+    /* fall through to the failure below */
+  }
+  fail("--params must be a JSON object");
+}
+
+const chain = program
+  .command("chain")
+  .description("read-only chain access through the daemon relay (never signs, never submits)");
+
+chain
+  .command("query")
+  .description("call a whitelisted read-only chain method through the daemon")
+  .requiredOption("--agent <name>", "agent account name")
+  .requiredOption("--method <method>", "read-only method, e.g. get_currency_balance, get_account")
+  .option("--params <json>", "JSON params object for the method", "{}")
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .action(async (options: { agent: string; method: string; params: string; config: string }) => {
+    try {
+      const config = loadConfig(options.config);
+      const response = await readViaDaemon({
+        socketPath: config.socketPath,
+        agent: options.agent,
+        token: readToken(join(config.tokenDir, `${options.agent}.token`)),
+        op: "query",
+        method: options.method,
+        params: parseParamsFlag(options.params),
+      });
+      print(response);
+      if (response.status === "error") process.exit(2);
+    } catch (error) {
+      fail((error as Error).message);
+    }
+  });
+
+chain
+  .command("balance")
+  .description("read a token balance through the daemon relay (defaults to the agent's own account)")
+  .requiredOption("--agent <name>", "agent account name")
+  .option("--account <name>", "account to read (default: the agent itself)")
+  .option("--contract <name>", "token contract", "eosio.token")
+  .option("--symbol <symbol>", "token symbol", "XPR")
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .action(
+    async (options: {
+      agent: string;
+      account?: string;
+      contract: string;
+      symbol: string;
+      config: string;
+    }) => {
+      try {
+        const config = loadConfig(options.config);
+        const response = await readViaDaemon({
+          socketPath: config.socketPath,
+          agent: options.agent,
+          token: readToken(join(config.tokenDir, `${options.agent}.token`)),
+          op: "query",
+          method: "get_currency_balance",
+          params: { code: options.contract, account: options.account ?? options.agent, symbol: options.symbol },
+        });
+        print(response);
+        if (response.status === "error") process.exit(2);
+      } catch (error) {
+        fail((error as Error).message);
+      }
+    },
+  );
+
+chain
+  .command("abi")
+  .description("fetch an account's ABI through the relay — to see the actions and their fields")
+  .requiredOption("--agent <name>", "agent account name")
+  .requiredOption("--account <name>", "account whose ABI to read (e.g. eosio.token)")
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .action(async (options: { agent: string; account: string; config: string }) => {
+    try {
+      const config = loadConfig(options.config);
+      const response = await readViaDaemon({
+        socketPath: config.socketPath,
+        agent: options.agent,
+        token: readToken(join(config.tokenDir, `${options.agent}.token`)),
+        op: "query",
+        method: "get_abi",
+        params: { account_name: options.account },
+      });
+      print(response);
+      if (response.status === "error") process.exit(2);
+    } catch (error) {
+      fail((error as Error).message);
+    }
+  });
+
 // ---------------------------------------------------------------- daemon
 
 const daemonCommand = program.command("daemon").description("daemon lifecycle (§11.5)");
@@ -416,6 +518,27 @@ daemonCommand
 // ----------------------------------------------------------------- agent
 
 const agentCommand = program.command("agent").description("agent administration (§11.2)");
+
+agentCommand
+  .command("whoami")
+  .description("print the agent's own identity (account, permission, public key) via the daemon")
+  .requiredOption("--agent <name>", "agent account name")
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .action(async (options: { agent: string; config: string }) => {
+    try {
+      const config = loadConfig(options.config);
+      const response = await readViaDaemon({
+        socketPath: config.socketPath,
+        agent: options.agent,
+        token: readToken(join(config.tokenDir, `${options.agent}.token`)),
+        op: "whoami",
+      });
+      print(response);
+      if (response.status === "error") process.exit(2);
+    } catch (error) {
+      fail((error as Error).message);
+    }
+  });
 
 agentCommand
   .command("create")

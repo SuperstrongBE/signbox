@@ -8,7 +8,7 @@ import { connect } from "node:net";
 import { randomUUID, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { SignBoxError, ValidationError } from "../core/errors.js";
-import type { SignResponseJson } from "../daemon/protocol.js";
+import type { ReadResponseJson, SignResponseJson } from "../daemon/protocol.js";
 import type { AdminCommand, AdminResponse } from "../daemon/server.js";
 import type { ChainContext } from "../core/types.js";
 
@@ -67,6 +67,36 @@ export async function signViaDaemon(options: SignViaDaemonOptions): Promise<Sign
   };
   const answer = await sendLine(options.socketPath, JSON.stringify(request));
   return JSON.parse(answer) as SignResponseJson;
+}
+
+export interface ReadViaDaemonOptions {
+  socketPath: string;
+  agent: string;
+  token: string;
+  op: "whoami" | "query";
+  /** query only. */
+  method?: string;
+  params?: Record<string, unknown>;
+  ttlMs?: number;
+}
+
+/** Send a read-only op (whoami/query) to the daemon on the agent socket. */
+export async function readViaDaemon(options: ReadViaDaemonOptions): Promise<ReadResponseJson> {
+  const now = Date.now();
+  const request: Record<string, unknown> = {
+    op: options.op,
+    requestId: randomUUID(),
+    agent: options.agent,
+    requestedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + (options.ttlMs ?? 30_000)).toISOString(),
+    token: options.token,
+  };
+  if (options.op === "query") {
+    request["method"] = options.method;
+    if (options.params !== undefined) request["params"] = options.params;
+  }
+  const answer = await sendLine(options.socketPath, JSON.stringify(request));
+  return JSON.parse(answer) as ReadResponseJson;
 }
 
 export async function adminCommand(

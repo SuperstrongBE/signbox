@@ -61,6 +61,38 @@ export type SignResponseJson =
       policyVersion?: number;
     };
 
+/**
+ * Read-only operations on the same authenticated socket (§12): the agent can
+ * ask who it is and read public chain data through the daemon's relay, without
+ * any path to signing. Discriminated from a sign request by `op`.
+ */
+export interface ReadRequestJson {
+  op: "whoami" | "query";
+  requestId: string;
+  agent: string;
+  requestedAt: string;
+  expiresAt: string;
+  token: string;
+  /** query only: a whitelisted read-only chain method and its params. */
+  method?: string;
+  params?: Record<string, unknown>;
+}
+
+export type ReadResponseJson =
+  | {
+      requestId: string;
+      status: "ok";
+      op: "whoami";
+      agent: string;
+      permission: string;
+      publicKey: string;
+      chain: string;
+      network: string;
+      chainId: string;
+    }
+  | { requestId: string; status: "ok"; op: "query"; method: string; result: unknown }
+  | { requestId: string; status: "error"; op: "whoami" | "query"; error: string };
+
 const ISO_DATETIME_PATTERN =
   "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$";
 
@@ -94,8 +126,25 @@ const signRequestSchema = {
   },
 } as const;
 
+const readRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["op", "requestId", "agent", "requestedAt", "expiresAt", "token"],
+  properties: {
+    op: { enum: ["whoami", "query"] },
+    requestId: { type: "string", pattern: "^[A-Za-z0-9-]{8,64}$" },
+    agent: { type: "string", pattern: "^[a-z1-5.]{1,12}$" },
+    requestedAt: { type: "string", pattern: ISO_DATETIME_PATTERN },
+    expiresAt: { type: "string", pattern: ISO_DATETIME_PATTERN },
+    token: { type: "string", pattern: "^[A-Za-z0-9_-]{16,256}$" },
+    method: { type: "string", pattern: "^[a-z_]{1,40}$" },
+    params: { type: "object" },
+  },
+} as const;
+
 const ajv = new Ajv({ strict: true, allErrors: false });
 const validateShape: ValidateFunction = ajv.compile(signRequestSchema);
+const validateReadShape: ValidateFunction = ajv.compile(readRequestSchema);
 
 /** Parse and validate one request line. Throws ValidationError on anything off. */
 export function parseSignRequest(line: string): SignRequestJson {
@@ -112,6 +161,37 @@ export function parseSignRequest(line: string): SignRequestJson {
     );
   }
   const request = parsed as SignRequestJson;
+  if (Number.isNaN(Date.parse(request.requestedAt)) || Number.isNaN(Date.parse(request.expiresAt))) {
+    throw new ValidationError("request timestamps are not valid dates");
+  }
+  return request;
+}
+
+/** Peek the operation kind without full validation. Defaults to "sign". */
+export function peekOp(line: string): "sign" | "whoami" | "query" {
+  try {
+    const op = (JSON.parse(line) as { op?: unknown }).op;
+    return op === "whoami" || op === "query" ? op : "sign";
+  } catch {
+    return "sign";
+  }
+}
+
+/** Parse and validate a read-only request line. Throws on anything off. */
+export function parseReadRequest(line: string): ReadRequestJson {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    throw new ValidationError("request is not valid JSON");
+  }
+  if (!validateReadShape(parsed)) {
+    throw new ValidationError("read request does not match the expected schema");
+  }
+  const request = parsed as ReadRequestJson;
+  if (request.op === "query" && (request.method === undefined || request.method === "")) {
+    throw new ValidationError("query requires a method");
+  }
   if (Number.isNaN(Date.parse(request.requestedAt)) || Number.isNaN(Date.parse(request.expiresAt))) {
     throw new ValidationError("request timestamps are not valid dates");
   }

@@ -36,11 +36,15 @@ import { evaluatePolicy } from "../core/policy/engine.js";
 import { ValidationError } from "../core/errors.js";
 import {
   parseSignRequest,
+  parseReadRequest,
+  peekOp,
   type BroadcastReport,
+  type ReadResponseJson,
   type SignRequestJson,
   type SignResponseJson,
 } from "./protocol.js";
 import type { TransactionBroadcaster } from "./broadcaster.js";
+import type { ChainReadRelay } from "./chainRelay.js";
 import { NonceCache } from "./nonceCache.js";
 import type { QuotaJournal } from "./quotaJournal.js";
 import type { PolicyCache } from "./policyCache.js";
@@ -105,6 +109,13 @@ export interface DaemonDependencies {
    * a plain signing (the signature is returned for the caller to submit).
    */
   broadcaster?: TransactionBroadcaster;
+  /**
+   * Read-only chain relay (agent convenience). Present when the agent may read
+   * public chain data (its balance, an account, a table) through the daemon.
+   * It is a strict read-only allow-list — never a path to submit — so it is
+   * outside the signing trust boundary. Absent → `query` returns an error.
+   */
+  relay?: ChainReadRelay;
   /**
    * Stateful quota journal (§8.5). Without it, any policy demanding
    * stateful limits refuses with QUOTA_UNAVAILABLE — fail closed.
@@ -325,11 +336,82 @@ export class SignBoxDaemon {
    * NEVER throws: every failure maps to a denied response; an audit failure
    * never fails a decision.
    */
-  async handleRequest(line: string): Promise<SignResponseJson> {
+  async handleRequest(line: string): Promise<SignResponseJson | ReadResponseJson> {
+    // Read-only ops (whoami/query) share the socket and token auth but never
+    // touch policy, quota, or the signer. Dispatch them before the sign path.
+    const op = peekOp(line);
+    if (op !== "sign") return this.handleReadRequest(line);
+
     const auditCtx: AuditContext = { agent: "unknown", contracts: [] };
     const response = await this.runDecision(line, auditCtx);
     this.recordAudit(response, auditCtx);
     return response;
+  }
+
+  /**
+   * Handle a read-only request: identity (`whoami`) or a whitelisted chain read
+   * (`query`). Authenticated by the same rotating token; NEVER reaches the
+   * signer or the policy, and cannot submit a transaction (INV-011).
+   */
+  private async handleReadRequest(line: string): Promise<ReadResponseJson> {
+    let request;
+    try {
+      request = parseReadRequest(line);
+    } catch {
+      return { requestId: "unknown", status: "error", op: "query", error: "request does not match the expected schema" };
+    }
+    const err = (message: string): ReadResponseJson => ({
+      requestId: request.requestId,
+      status: "error",
+      op: request.op,
+      error: message,
+    });
+
+    try {
+      // Same authentication as signing: unknown agent and bad token are
+      // indistinguishable (the daemon never reveals which agents exist).
+      const runtime = this.agents.get(request.agent);
+      if (runtime === undefined || !constantTimeEquals(runtime.token, request.token)) {
+        return err("request could not be authenticated");
+      }
+      if (!runtime.enabled) return err("agent is disabled");
+
+      const now = this.now();
+      const requestedAt = Date.parse(request.requestedAt);
+      const expiresAt = Date.parse(request.expiresAt);
+      if (
+        expiresAt <= now ||
+        requestedAt > now + this.cfg.maxClockSkewMs ||
+        expiresAt <= requestedAt ||
+        expiresAt - requestedAt > this.cfg.maxRequestTtlMs
+      ) {
+        return err("request window is invalid or expired");
+      }
+
+      if (request.op === "whoami") {
+        // Public identity only — never the key material.
+        return {
+          requestId: request.requestId,
+          status: "ok",
+          op: "whoami",
+          agent: runtime.agent,
+          permission: runtime.permission,
+          publicKey: runtime.key.publicKey,
+          chain: runtime.chain.chain,
+          network: runtime.chain.network,
+          chainId: runtime.chain.chainId,
+        };
+      }
+
+      // op === "query": read-only chain relay.
+      if (this.deps.relay === undefined) return err("chain relay is not available");
+      if (request.method === undefined) return err("query requires a method");
+      const result = await this.deps.relay.call(request.method, request.params ?? {});
+      return { requestId: request.requestId, status: "ok", op: "query", method: request.method, result };
+    } catch (error) {
+      // Fail closed and never leak internals (INV-010).
+      return err(error instanceof Error ? error.message : "read request failed");
+    }
   }
 
   private recordAudit(response: SignResponseJson, auditCtx: AuditContext): void {
