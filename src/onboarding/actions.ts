@@ -35,21 +35,13 @@ export interface BuildActionsInput {
   agent: string;
   permission: string;
   agentPublicKey: string;
+  /** The authority's public key (resolved from chain), used as the agent's owner. */
+  authorityPublicKey: string;
   mode: "create" | "existing";
   signboxContract: string;
   emptyPolicyJson: string;
   emptyPolicyHash: string;
   ramBytes?: number;
-}
-
-/** An authority structure satisfied solely by `account@permission`. */
-function accountAuthority(actor: string, permission = "active") {
-  return {
-    threshold: 1,
-    keys: [],
-    accounts: [{ permission: { actor, permission }, weight: 1 }],
-    waits: [],
-  };
 }
 
 /** An authority structure satisfied by a single public key. */
@@ -67,7 +59,11 @@ export function buildOnboardingActions(input: BuildActionsInput): OnboardingActi
   const byAuthority: Authorization[] = [{ actor: input.authority, permission: "active" }];
 
   if (input.mode === "create") {
-    // Create the agent account with owner/active under the authority's control.
+    // Create the agent account with:
+    //   owner  = the authority's public key (they keep ultimate control),
+    //   active = the agent's generated key (what the SignBox daemon signs with).
+    // Putting the agent key directly on `active` avoids a separate dedicated
+    // permission via updateauth, which XPR blacklists in signing requests.
     actions.push({
       account: "eosio",
       name: "newaccount",
@@ -75,8 +71,8 @@ export function buildOnboardingActions(input: BuildActionsInput): OnboardingActi
       data: {
         creator: input.authority,
         name: input.agent,
-        owner: accountAuthority(input.authority),
-        active: accountAuthority(input.authority),
+        owner: keyAuthority(input.authorityPublicKey),
+        active: keyAuthority(input.agentPublicKey),
       },
     });
 

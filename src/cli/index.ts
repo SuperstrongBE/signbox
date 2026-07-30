@@ -23,7 +23,6 @@ import { XPR_CHAIN, XPR_NETWORKS } from "../chains/xpr/networks.js";
 import { generateK1KeyPair } from "../chains/xpr/keygen.js";
 import { runOnboarding, type BuiltRequest } from "../onboarding/flow.js";
 import { XprOnboardingBackend } from "../onboarding/xprBackend.js";
-import { generatePermissionName } from "../onboarding/permission.js";
 import { promoteKeystoreFile, destroyKeystoreFile } from "../keystore/encryptedFile.js";
 import qrcodeTerminal from "qrcode-terminal";
 import { pinChainId } from "../chains/xpr/adapter.js";
@@ -469,7 +468,9 @@ agentCommand
         }
         scheme = options.scheme as Scheme;
       }
-      const permission = options.permission ?? generatePermissionName();
+      // The agent key is placed on `active` at account creation, so that is
+      // the permission the daemon signs with (overridable via --permission).
+      const permission = options.permission ?? "active";
 
       const backend = new XprOnboardingBackend({
         endpoints: descriptor?.endpoints ?? [],

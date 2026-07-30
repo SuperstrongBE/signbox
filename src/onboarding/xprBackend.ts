@@ -104,17 +104,36 @@ export class XprOnboardingBackend implements OnboardingBackend {
     }
   }
 
+  /** Resolve an account's `active` public key from chain (§10.1). */
+  private async resolveActiveKey(account: string): Promise<string> {
+    const info = (await this.rpc().get_account(account)) as {
+      permissions?: { perm_name?: string; required_auth?: { keys?: { key?: string }[] } }[];
+    };
+    const active = (info.permissions ?? []).find((p) => p.perm_name === "active");
+    const key = active?.required_auth?.keys?.[0]?.key;
+    if (key === undefined) {
+      throw new Error(`cannot resolve a public key for the authority's active permission`);
+    }
+    return key;
+  }
+
   async buildRequest(args: {
     input: OnboardingInput;
     agentPublicKey: string;
     emptyPolicyJson: string;
     emptyPolicyHash: string;
   }): Promise<BuiltRequest> {
+    // The new agent account's owner is the authority's own public key, so
+    // resolve it from chain (create mode only needs it).
+    const authorityPublicKey =
+      args.input.mode === "create" ? await this.resolveActiveKey(args.input.authority) : "";
+
     const actions = buildOnboardingActions({
       authority: args.input.authority,
       agent: args.input.agent,
       permission: args.input.permission,
       agentPublicKey: args.agentPublicKey,
+      authorityPublicKey,
       mode: args.input.mode,
       signboxContract: this.opts.signboxContract,
       emptyPolicyJson: args.emptyPolicyJson,
@@ -189,28 +208,25 @@ export class XprOnboardingBackend implements OnboardingBackend {
       return { ok: false, reason: "agent account not found" };
     }
 
-    // TEMPORARILY DISABLED alongside the updateauth action (XPR blacklists
-    // updateauth in signing requests): the dedicated permission is not created
-    // during onboarding, so we cannot check it here yet. Re-enable this block
-    // once the permission is provisioned (see actions.ts).
-    //
-    // // The dedicated permission must carry exactly the agent's public key.
-    // let account: { permissions?: unknown[] };
-    // try {
-    //   account = (await this.rpc().get_account(args.input.agent)) as { permissions?: unknown[] };
-    // } catch {
-    //   return { ok: false, reason: "cannot read agent account" };
-    // }
-    // const perm = (account.permissions ?? []).find(
-    //   (p) => (p as { perm_name?: string }).perm_name === args.input.permission,
-    // ) as { required_auth?: { keys?: { key?: string }[] } } | undefined;
-    // if (perm === undefined) {
-    //   return { ok: false, reason: "dedicated permission not found" };
-    // }
-    // const keys = perm.required_auth?.keys ?? [];
-    // if (!keys.some((k) => normalizeKey(k.key) === normalizeKey(args.agentPublicKey))) {
-    //   return { ok: false, reason: "dedicated permission does not hold the agent key" };
-    // }
+    // The agent's signing permission (active) must carry exactly the agent's
+    // public key — proving the onboarding placed the key where the daemon
+    // expects to sign.
+    let account: { permissions?: unknown[] };
+    try {
+      account = (await this.rpc().get_account(args.input.agent)) as { permissions?: unknown[] };
+    } catch {
+      return { ok: false, reason: "cannot read agent account" };
+    }
+    const perm = (account.permissions ?? []).find(
+      (p) => (p as { perm_name?: string }).perm_name === args.input.permission,
+    ) as { required_auth?: { keys?: { key?: string }[] } } | undefined;
+    if (perm === undefined) {
+      return { ok: false, reason: `permission "${args.input.permission}" not found` };
+    }
+    const keys = perm.required_auth?.keys ?? [];
+    if (!keys.some((k) => normalizeKey(k.key) === normalizeKey(args.agentPublicKey))) {
+      return { ok: false, reason: "agent permission does not hold the agent key" };
+    }
 
     // The policy row must exist with the expected authority, permission and
     // the empty-policy hash — proving the landed tx matches the request.
