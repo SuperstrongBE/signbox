@@ -1,0 +1,15 @@
+{
+    "actions": [
+      {
+        "account": "eosio.token",
+        "name": "transfer",
+        "authorization": [{ "actor": "funagent", "permission": "active" }],
+        "data": {
+          "from": "funagent",
+          "to": "alice",
+          "quantity": "1.0000 XPR",
+          "memo": "signbox test"
+        }
+      }
+    ]
+  }

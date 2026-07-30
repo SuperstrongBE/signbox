@@ -20,9 +20,8 @@
  */
 
 import Database from "better-sqlite3";
-import { createHash } from "node:crypto";
-import { canonicalize } from "../core/canonical/jcs.js";
 import { validatePolicy, type Policy } from "../core/policy/schema.js";
+import { verifyStoredPolicy } from "../core/policy/onchain.js";
 import type { PolicyReader } from "./chainPolicyReader.js";
 
 export interface CachedPolicy {
@@ -135,27 +134,11 @@ export class PolicyCache {
     }
     if (raw === null) return { ok: false, reason: "not_registered" };
 
-    // Integrity: sha256 of the stored bytes must equal the stored hash — the
-    // same invariant the contract enforces on-chain (§8.6).
-    const computed = createHash("sha256").update(Buffer.from(raw.policyjson, "utf8")).digest("hex");
-    if (computed !== raw.policyhash) return { ok: false, reason: "hash_mismatch" };
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw.policyjson);
-    } catch {
-      return { ok: false, reason: "invalid_json" };
-    }
-    // Canonicalization correctness: the stored bytes must BE the canonical
-    // form, not merely hash to it (§8.6).
-    if (canonicalize(parsed) !== raw.policyjson) return { ok: false, reason: "not_canonical" };
-
-    let policy: Policy;
-    try {
-      policy = validatePolicy(parsed);
-    } catch {
-      return { ok: false, reason: "schema_invalid" };
-    }
+    // Integrity gate (§8.6): hash + canonical JCS + schema. The exact same
+    // check the CLI dry-run applies, so the two can never disagree.
+    const verified = verifyStoredPolicy(raw.policyjson, raw.policyhash);
+    if (!verified.ok) return { ok: false, reason: verified.reason };
+    const policy: Policy = verified.policy;
 
     // Anti-rollback: never accept a version below the highest ever seen (§14.5).
     const highest = this.highestSeen(agent);

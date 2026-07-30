@@ -1050,7 +1050,7 @@ signbox transaction sign --agent superagent --transaction transaction.json --pus
 Semantics:
 
 - `inspect` decodes without policy and without signing;
-- `explain` evaluates without signing;
+- `explain` reads the agent's **on-chain** policy (INV-004) and evaluates the transaction against it — applying the same integrity gate as the daemon (§8.6) — without signing. It never takes a local policy file; permission and version come from the on-chain row;
 - `sign` returns a signed transaction and broadcasts nothing;
 - `push` broadcasts an already-signed transaction;
 - `sign --push` combines both steps with explicit intent.
