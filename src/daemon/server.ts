@@ -37,6 +37,7 @@ import { ValidationError } from "../core/errors.js";
 import { parseSignRequest, type SignRequestJson, type SignResponseJson } from "./protocol.js";
 import { NonceCache } from "./nonceCache.js";
 import type { QuotaJournal } from "./quotaJournal.js";
+import type { PolicyCache } from "./policyCache.js";
 
 export interface AgentRuntime {
   agent: string;
@@ -87,6 +88,13 @@ export interface DaemonDependencies {
    * stateful limits refuses with QUOTA_UNAVAILABLE — fail closed.
    */
   quotas?: QuotaJournal;
+  /**
+   * On-chain policy cache (§14). When present it is the source of truth:
+   * the daemon evaluates the cached on-chain policy, not the statically
+   * registered one, and refuses when it cannot be confirmed. Absent in
+   * unit tests and offline dev, where the registered policy is used.
+   */
+  policyCache?: PolicyCache;
   /** Injectable clock for tests. */
   now?: () => number;
 }
@@ -351,6 +359,26 @@ export class SignBoxDaemon {
         return deny("CHAIN_MISMATCH", "request chain does not match the agent configuration");
       }
 
+      // Load the active policy. With a cache configured, the on-chain policy
+      // is the source of truth (§14.1): anti-rollback + freshness apply, and
+      // an unconfirmable policy fails closed. Without one (tests/dev), the
+      // statically registered policy is used.
+      let activePolicy = runtime.policy;
+      let activeVersion = runtime.policyVersion;
+      if (this.deps.policyCache !== undefined) {
+        const cached = await this.deps.policyCache.get(runtime.agent, now);
+        if ("unavailable" in cached) {
+          return deny("POLICY_UNAVAILABLE", "policy could not be confirmed on-chain");
+        }
+        // On-chain disable is a second, canonical kill-switch alongside the
+        // local one already checked above (§14.6).
+        if (!cached.enabled) {
+          return deny("AGENT_DISABLED", "agent is disabled on-chain");
+        }
+        activePolicy = cached.policy;
+        activeVersion = cached.version;
+      }
+
       // Decode: INV-014/INV-003 enforcement lives in the ChainAdapter.
       let decoded: DecodedTransaction;
       try {
@@ -360,11 +388,11 @@ export class SignBoxDaemon {
       }
 
       // Deterministic policy evaluation.
-      const { decision, quotaDemands } = evaluatePolicy(decoded, runtime.policy, {
+      const { decision, quotaDemands } = evaluatePolicy(decoded, activePolicy, {
         agent: runtime.agent,
         agentPermission: runtime.permission,
         chainId: chain.chainId,
-        policyVersion: runtime.policyVersion,
+        policyVersion: activeVersion,
       });
 
       if (decision.effect === "deny") {
