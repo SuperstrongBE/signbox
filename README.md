@@ -4,7 +4,7 @@
 
 SignBox sits between an AI agent (or any automated tool) and a blockchain private key. The agent submits transactions it would like to sign; SignBox inspects them, checks them against a deterministic policy, and either signs or refuses. The agent never touches the key — it only ever holds a limited capability: *asking for a signature*.
 
-> Status: **specification draft v0.3 + Phase 1 implementation in progress**. Not production-ready. First target chain: [XPR Network](https://xprnetwork.org).
+> Status: **spec draft v0.4 · Phase 1 nearly complete** — engine, keystore, daemon, XPR signing, quotas, on-chain policy contract + cache, and interactive onboarding all implemented and tested. Not production-ready. First target chain: [XPR Network](https://xprnetwork.org).
 
 ---
 
@@ -73,6 +73,30 @@ Honesty matters in a security tool:
 
 The agent's key signs only what the policy allows. Everything administrative — including changing the policy itself — requires the external authority's wallet.
 
+## Onboarding an agent
+
+`signbox agent create` walks the onboarding (interactively, or via flags for scripts):
+
+```
+$ signbox agent create
+Chain:        1) XPR Network (default)
+Network:      1) mainnet   2) testnet (default)
+Authority account (your account name): superdev
+Agent account name: superagent
+Mode:         1) create a new account (default)   2) onboard an existing one
+Key export policy: 1) non-exportable (recommended)   2) encrypted-backup-only
+keystore passphrase: ****
+```
+
+SignBox then:
+
+1. generates the agent's key locally and seals it in a **temporary** encrypted container (nothing active yet);
+2. builds a **signing request (ESR)** — create the account with `owner`/`active` under the authority's control, add a dedicated permission holding the agent's key, register an empty *deny-all* policy — and shows it as a **QR code**;
+3. the **authority scans and signs it in their own wallet** (SignBox never holds the authority's key);
+4. after confirming on-chain that what landed matches the request exactly, SignBox **promotes** the key to active. A timeout or any mismatch destroys the temp container — the key is never orphaned and never lost.
+
+The superior authority pays the account's RAM. `linkauth` (the chain-enforced coarse bound that complements the fine-grained policy) is left to the developer. The dedicated permission is inert on-chain until linked — the intended deny-by-default posture.
+
 ## What a policy looks like
 
 ```json
@@ -132,7 +156,7 @@ Phase 1 (XPR MVP) — component status:
 | Stateful quota journal (SQLite, atomic reserve/commit) | ✅ done |
 | CLI (`inspect`/`explain`/`sign`/`push`, `doctor`, `daemon`, `key`, `agent`) | ✅ done |
 | On-chain policy contract (AssemblyScript) + anti-rollback policy cache | ✅ done |
-| ESR onboarding (`agent create`) | ⏳ next |
+| ESR onboarding (`agent create`, interactive) | ✅ done |
 | Audit log, MCP server, `llms.txt` | ⏳ next |
 
 Later phases:
@@ -158,7 +182,7 @@ The on-chain contract is a separate sub-project under [`contract/`](contract/) (
 
 The test suite includes the specification's adversarial set (§17.4): second-action injection, wrong token contract, homograph symbols, incorrect decimals, chain-id substitution, keystore tampering, concurrent quota-cap bypass, and policy-cache rollback.
 
-The full architecture and threat model live in [`docs/signbox-spec-v0.3-complete.md`](docs/signbox-spec-v0.3-complete.md). Start with §1.1 — it is the reading key for everything else.
+The full architecture and threat model live in [`docs/signbox-spec-v0.4-complete.md`](docs/signbox-spec-v0.4-complete.md). Start with §1.1 — it is the reading key for everything else.
 
 ## License
 

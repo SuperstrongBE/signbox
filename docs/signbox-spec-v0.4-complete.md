@@ -1,7 +1,7 @@
 # SignBox — Architecture and Security Specification
 
-**Status:** Draft v0.3  
-**Date:** 2026-07-29  
+**Status:** Draft v0.4 (Phase 1 implementation)  
+**Date:** 2026-07-30  
 **Initial target:** XPR Network (ChainAdapter architecture from V1)  
 **Recommended implementation:** TypeScript / Node.js or Bun  
 **Concept author:** Rockerone / Railgun ecosystem
@@ -9,6 +9,13 @@
 > **v0.2 → v0.3:** "black box" model made explicit (§1.1); new invariant INV-014 "unserialized JSON input only"; explicit separation of the two signing paths (§5.5); `packedTransaction` removed from the API (§12.1); actual role of the contract reframed (§7.5); canonicalization pinned (§8.6); quotas declared best-effort (§8.5); anti-rollback and local kill-switch (§14.5–14.6); mandatory peer credentials (§12.3); exhaustive field inspection (§15.5).
 >
 > **v0.3.1:** §12.3 reworked into **layered local authentication** — Node.js does not expose `SO_PEERCRED`/`getpeereid`, so the MVP proves caller identity through token-file possession (a userspace equivalent), and the native kernel-level peer-credential check becomes an additional Phase 2 hardening layer. `token` field added to `SignRequest` (§12.1).
+>
+> **v0.4 (implementation deltas):** decisions locked while building the Phase 1 MVP.
+> - **Zero-config.** The daemon takes no agents/policies configuration. Agents are discovered from the encrypted keystores it holds (their agent name and chain come from the keystore's authenticated metadata); policies come from the on-chain contract through the cache. An optional config file covers deployment settings only (network, endpoints, contract account, paths), defaulting under `~/.signbox/`. There is no local `policy.json` in the trust path (INV-004, §15.2).
+> - **On-chain contract.** `createpolicy` requires the initial version to be 1; `setpolicy` requires a strictly increasing version (the on-chain source of the daemon's anti-rollback); `sha256(policyjson) == policyhash` is verified on-chain, made possible by requiring the stored JSON to already be canonical JCS bytes (§8.6); the authority pays the row's RAM; `setauthority` requires the current AND new authority to co-sign. The contract never parses the policy JSON — the daemon is the sole validator (§7.5).
+> - **Onboarding (§10).** Two modes: create a new agent account, or onboard an existing one. The agent's `owner`/`active` are controlled by the authority via an account permission (no authority key needed); the SignBox key lives on a dedicated permission, child of `active`; `linkauth` is out of scope (the developer links it per policy). Session timeout = 2 minutes (the XPR wallet window). The `agent create` CLI is interactive, prompting for chain (XPR only), network, authority, agent, mode and key export policy; flags remain for scripted use.
+> - **Policy cache freshness.** 30 s background refresh; financial policies re-confirmed within 10 s; strict fail-closed (§14.3–14.4). Anti-rollback watermark persisted across restarts (§14.5).
+> - Open questions #2, #3, #4, #5 and #10 are resolved accordingly (§19).
 
 ---
 
@@ -1417,15 +1424,15 @@ The journal may be hash-chained to detect tampering.
 ## 19. Open questions
 
 1. Which deployments enable the `push` MCP tool? Recommendation: disabled by default.
-2. Does the contract store the full JSON or only its hash and a URI?
-3. Which native `linkauth` are created by default?
-4. Does the authority transfer require dual acceptance?
-5. What is the maximum cache freshness for financial operations?
+2. Does the contract store the full JSON or only its hash and a URI? **Resolved (v0.4):** the MVP stores the canonical JSON on-chain (size-capped), with `sha256(policyjson) == policyhash` verified on-chain because the JSON must be canonical JCS bytes (§7.5, §8.6). A hash+URI variant remains the path if policies grow large.
+3. Which native `linkauth` are created by default? **Resolved (v0.4):** none — `linkauth` is OUT of the onboarding scope and is the developer's responsibility, linked per policy. The SignBox key sits on a dedicated permission that is inert on-chain until linked (§10.2).
+4. Does the authority transfer require dual acceptance? **Resolved (v0.4):** yes — `setauthority` requires BOTH the current and the new authority to co-sign (§7.3).
+5. What is the maximum cache freshness for financial operations? **Resolved (v0.4):** 30 s background refresh; a *financial* policy (any allow rule with value limits) is re-confirmed synchronously if older than 10 s; strict fail-closed otherwise (§14.3).
 6. Must the encrypted backup exist in the MVP?
 7. Is a human-approval mode needed above a threshold?
 8. How to handle multi-action transactions where some actions are authorized and others are not? Recommended answer: total refusal.
 9. How to handle a policy that has become incompatible with a new engine version? Recommended answer: refusal and explicit migration.
-10. Is the agent account created through a sponsored API or does it require the authority's resources?
+10. Is the agent account created through a sponsored API or does it require the authority's resources? **Resolved (v0.4):** the superior authority pays (its resources fund `newaccount` + `buyrambytes` and the policy row's RAM). The atomic single-transaction path is subject to an XPR spike, with a two-transaction fallback (§10.2).
 
 ---
 
@@ -1450,6 +1457,8 @@ The journal may be hash-chained to detect tampering.
 - **Quotas: best-effort local guarantee; any absolute cap lives on-chain (§8.5).**
 - **Policy cache: anti-rollback through monotonic version; local kill-switch for incident response (§14.5–14.6).**
 - **Local authentication: layered — token-file possession in the MVP, native kernel peer credentials added in Phase 2 (§12.3).**
+- **Configuration: zero-config by default; agents discovered from keystores, policies from the chain; a config file covers deployment settings only, never agents/policies (v0.4).**
+- **Onboarding: two modes (create / existing); the authority pays RAM; `linkauth` left to the developer; interactive `agent create` CLI (v0.4).**
 - **Multichain: `ChainAdapter` contract from V1, a single XPR implementation.**
 - **Rust: postponed; interfaces prepared for a future native backend.**
 
