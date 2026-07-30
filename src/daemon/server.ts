@@ -34,7 +34,13 @@ import type {
 import type { Policy } from "../core/policy/schema.js";
 import { evaluatePolicy } from "../core/policy/engine.js";
 import { ValidationError } from "../core/errors.js";
-import { parseSignRequest, type SignRequestJson, type SignResponseJson } from "./protocol.js";
+import {
+  parseSignRequest,
+  type BroadcastReport,
+  type SignRequestJson,
+  type SignResponseJson,
+} from "./protocol.js";
+import type { TransactionBroadcaster } from "./broadcaster.js";
 import { NonceCache } from "./nonceCache.js";
 import type { QuotaJournal } from "./quotaJournal.js";
 import type { PolicyCache } from "./policyCache.js";
@@ -91,6 +97,14 @@ export interface DaemonDependencies {
   decode: (input: unknown, context: ChainContext) => DecodedTransaction;
   /** Path-1 signing seam (§5.5). Called only after an allow decision. */
   signer: TransactionSigner;
+  /**
+   * Broadcast seam (§5.5, §13). Present when the daemon may submit on the
+   * agent's behalf (request `broadcast: true`): the signature never leaves the
+   * daemon and the reserved quota is committed only if the tx lands. Absent in
+   * unit tests and sign-only deployments — a broadcast request then degrades to
+   * a plain signing (the signature is returned for the caller to submit).
+   */
+  broadcaster?: TransactionBroadcaster;
   /**
    * Stateful quota journal (§8.5). Without it, any policy demanding
    * stateful limits refuses with QUOTA_UNAVAILABLE — fail closed.
@@ -484,10 +498,51 @@ export class SignBoxDaemon {
         }
         throw error;
       }
-      if (reservationId !== undefined) {
-        this.deps.quotas?.commit(reservationId, runtime.agent, signed.transactionDigest);
+
+      const commit = (): void => {
+        if (reservationId !== undefined) {
+          this.deps.quotas?.commit(reservationId, runtime.agent, signed.transactionDigest);
+        }
+      };
+      const release = (): void => {
+        if (reservationId !== undefined) this.deps.quotas?.release(reservationId);
+      };
+      const quotaState = (fate: "committed" | "released"): "committed" | "released" | "none" =>
+        reservationId === undefined ? "none" : fate;
+
+      // Daemon-owned submit path (§13): SignBox broadcasts and the signature
+      // never leaves. The reserved quota follows the CHAIN outcome, not the
+      // mere fact of signing — so a tx rejected on-chain frees its quota.
+      if (request.broadcast === true && this.deps.broadcaster !== undefined) {
+        const outcome = await this.deps.broadcaster.broadcast(signed.signedTransaction);
+        let report: BroadcastReport;
+        if (outcome.status === "accepted") {
+          commit();
+          report = { status: "accepted", receipt: outcome.receipt, quota: quotaState("committed") };
+        } else if (outcome.status === "rejected") {
+          // Deterministic rejection: tx did not land, bytes discarded here →
+          // releasing the reservation cannot enable a replay/double-spend.
+          release();
+          report = { status: "rejected", reason: outcome.reason, quota: quotaState("released") };
+        } else {
+          // Ambiguous: it may have landed → keep the quota (fail closed).
+          commit();
+          report = { status: "ambiguous", reason: outcome.reason, quota: quotaState("committed") };
+        }
+        // The signed bytes are NEVER returned on the submit path.
+        return {
+          requestId: request.requestId,
+          status: "signed",
+          signature: signed.signature,
+          transactionDigest: signed.transactionDigest,
+          policyVersion: decision.policyVersion,
+          broadcast: report,
+        };
       }
 
+      // Plain sign (or no broadcaster available): the signature becomes a
+      // bearer credential the moment it is returned, so it commits on signing.
+      commit();
       const response: SignResponseJson = {
         requestId: request.requestId,
         status: "signed",

@@ -6,7 +6,7 @@
         "authorization": [{ "actor": "funagent", "permission": "active" }],
         "data": {
           "from": "funagent",
-          "to": "rockerone",
+          "to": "rlgn",
           "quantity": "1.0000 XPR",
           "memo": "signbox test"
         }

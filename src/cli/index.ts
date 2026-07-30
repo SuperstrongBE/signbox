@@ -10,7 +10,10 @@
  * - `transaction sign`     asks the RUNNING DAEMON to sign (the CLI holds
  *                          no key and evaluates no policy on this path);
  * - `transaction push`     broadcasts an already-signed transaction;
- * - `sign --push`          combines both with explicit intent.
+ * - `sign --push`          signs AND submits through the daemon: the signature
+ *                          never leaves it and the stateful quota follows the
+ *                          chain outcome (committed only if the tx lands,
+ *                          released on a deterministic rejection — §13).
  *
  * Output is structured JSON on stdout. Secrets never appear (INV-002).
  */
@@ -296,24 +299,36 @@ tx.command("sign")
   .requiredOption("--agent <name>", "agent account name")
   .requiredOption("--transaction <file>", "transaction JSON file")
   .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
-  .option("--push", "broadcast after signing (explicit intent, INV-011)", false)
+  .option("--push", "sign AND submit via the daemon (explicit intent, INV-011)", false)
   .action(async (options: { agent: string; transaction: string; config: string; push: boolean }) => {
     try {
       const config = loadConfig(options.config);
+      // With --push the DAEMON broadcasts: the signature never leaves it and
+      // the stateful quota follows the chain outcome (committed only if the tx
+      // lands, released on a deterministic rejection — §13).
       const response = await signViaDaemon({
         socketPath: config.socketPath,
         agent: options.agent,
         context: chainContextOf(config),
         transaction: readJsonFile(options.transaction),
         token: readToken(join(config.tokenDir, `${options.agent}.token`)),
+        broadcast: options.push,
       });
-      if (response.status === "signed" && options.push) {
+
+      // Legacy fallback: a sign-only daemon (no broadcaster) returns the signed
+      // bytes without a broadcast report. Submit them client-side, as before.
+      if (response.status === "signed" && options.push && response.broadcast === undefined) {
         const receipt = await pushSigned(config.endpoints, config.chainId, response.signedTransaction);
         print({ ...response, pushed: true, receipt });
         return;
       }
+
       print(response);
+      // Non-zero exit on anything that did not result in a landed/valid tx.
       if (response.status === "denied") process.exit(2);
+      if (response.status === "signed" && response.broadcast !== undefined && response.broadcast.status !== "accepted") {
+        process.exit(2);
+      }
     } catch (error) {
       fail((error as Error).message);
     }

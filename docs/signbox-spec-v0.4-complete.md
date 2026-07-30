@@ -762,7 +762,9 @@ Evaluation and consumption recording must be atomic in order to prevent two conc
 
 - a restore or loss of the local journal resets the counters;
 - two misconfigured daemon instances keep independent counters;
-- the quota is consumed **at signing time**, not at broadcast time: a transaction signed but never pushed consumes quota, and a re-submission of the same digest must be recognized as idempotent before any new debit.
+- **when to consume depends on who submits:**
+  - **sign-only path** (the signature is returned to the caller): quota is consumed **at signing time**. Once the signature leaves SignBox it is a bearer credential that can be broadcast until it expires, so it must count even if never pushed — releasing it would open a double-spend. Re-submission of the same digest is idempotent (no new debit).
+  - **daemon-owned submit path** (`sign --push` / `broadcast: true`): SignBox signs, broadcasts, and the signature never leaves the daemon, so quota follows the **chain outcome** — reserved before signing, then *committed* only if the tx lands, *released* on a deterministic chain rejection (insufficient NET/CPU/RAM, `eosio_assert`, bad auth, expired). An ambiguous transport failure (timeout) keeps the reservation (fail closed — the tx may have landed). This is why a broadcast that the chain rejects frees its quota instead of burning it.
 
 Any cap that must be absolutely guaranteed must be enforced on-chain (contract, permission), not only in SignBox (INV-006).
 
@@ -1052,8 +1054,8 @@ Semantics:
 - `inspect` decodes without policy and without signing;
 - `explain` evaluates the transaction against the agent's **on-chain** policy (INV-004) without signing, applying the same integrity gate as the daemon (§8.6); permission and version come from the on-chain row. A local `--policy <file>` **overrides** the on-chain policy so an author can test a policy **before** deploying it (schema-validated only — a hand-authored file has no hash yet);
 - `sign` returns a signed transaction and broadcasts nothing;
-- `push` broadcasts an already-signed transaction;
-- `sign --push` combines both steps with explicit intent.
+- `push` broadcasts an already-signed transaction (a signature produced earlier by sign-only);
+- `sign --push` signs **and submits through the daemon** with explicit intent. On this path the signature never leaves SignBox and the stateful quota follows the chain outcome (committed only if the tx lands, released on a deterministic rejection — §8.5). The response carries a `broadcast` report (`accepted` / `rejected` / `ambiguous`) and the quota's fate.
 
 The default output is structured JSON. Secrets are never included.
 
@@ -1185,18 +1187,19 @@ Validate provider evidence
   ↓
 Evaluate allow rules
   ↓
-Sign only, or sign+push when explicitly requested
-  ↓
-Reserve stateful quotas atomically
+Reserve stateful quotas atomically  (BEFORE signing)
   ↓
 Sign transaction digest
   ↓
-Commit quota journal
-  ↓
-Return signature
+┌─ sign-only path ──────────────┐   ┌─ submit path (--push) ───────────────────┐
+│ Commit quota journal          │   │ Broadcast (signature stays in the daemon) │
+│ Return the signature          │   │   accepted  → commit quota, return receipt│
+└───────────────────────────────┘   │   rejected  → RELEASE quota (nothing spent)│
+                                     │   ambiguous → keep quota (fail closed)     │
+                                     └────────────────────────────────────────────┘
 ```
 
-If any step fails: refusal.
+If any step before signing fails: refusal. On the submit path, a deterministic chain rejection releases the reservation (the tx did not land and its bytes never left SignBox), so a failed broadcast never burns quota.
 
 ---
 

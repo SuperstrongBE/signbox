@@ -44,6 +44,8 @@ export interface SignViaDaemonOptions {
   context: ChainContext;
   transaction: unknown;
   token: string;
+  /** Ask the daemon to broadcast after signing (the signature never leaves it). */
+  broadcast?: boolean;
   /** Request validity window; must stay within the daemon's maximum. */
   ttlMs?: number;
 }
@@ -57,6 +59,7 @@ export async function signViaDaemon(options: SignViaDaemonOptions): Promise<Sign
     network: options.context.network,
     chainId: options.context.chainId,
     transaction: options.transaction,
+    ...(options.broadcast === true ? { broadcast: true } : {}),
     requestedAt: new Date(now).toISOString(),
     expiresAt: new Date(now + (options.ttlMs ?? 60_000)).toISOString(),
     nonce: randomBytes(24).toString("base64url"),

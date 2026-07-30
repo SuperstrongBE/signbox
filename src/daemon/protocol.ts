@@ -21,10 +21,25 @@ export interface SignRequestJson {
   chainId: string;
   /** Raw unserialized JSON transaction — the only accepted format (INV-014). */
   transaction: unknown;
+  /**
+   * When true, SignBox signs AND submits, owning the whole lifecycle: the
+   * signature never leaves the daemon, and the reserved quota is committed only
+   * if the tx lands / released on a deterministic chain rejection (§13).
+   */
+  broadcast?: boolean;
   requestedAt: string;
   expiresAt: string;
   nonce: string;
   token: string;
+}
+
+/** Outcome of the daemon-owned submit path, and its effect on stateful quota. */
+export interface BroadcastReport {
+  status: "accepted" | "rejected" | "ambiguous";
+  receipt?: unknown;
+  reason?: string;
+  /** Fate of the reserved stateful quota: "none" when the policy set none. */
+  quota: "committed" | "released" | "none";
 }
 
 export type SignResponseJson =
@@ -35,6 +50,8 @@ export type SignResponseJson =
       transactionDigest: string;
       signedTransaction?: unknown;
       policyVersion: number;
+      /** Present only when the request asked the daemon to broadcast. */
+      broadcast?: BroadcastReport;
     }
   | {
       requestId: string;
@@ -69,6 +86,7 @@ const signRequestSchema = {
     network: { type: "string", minLength: 1, maxLength: 32 },
     chainId: { type: "string", pattern: "^[0-9a-f]{64}$" },
     transaction: { type: "object" },
+    broadcast: { type: "boolean" },
     requestedAt: { type: "string", pattern: ISO_DATETIME_PATTERN },
     expiresAt: { type: "string", pattern: ISO_DATETIME_PATTERN },
     nonce: { type: "string", pattern: "^[A-Za-z0-9_-]{16,128}$" },
