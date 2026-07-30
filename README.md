@@ -4,7 +4,7 @@
 
 SignBox sits between an AI agent (or any automated tool) and a blockchain private key. The agent submits transactions it would like to sign; SignBox inspects them, checks them against a deterministic policy, and either signs or refuses. The agent never touches the key — it only ever holds a limited capability: *asking for a signature*.
 
-> Status: **spec draft v0.4 · Phase 1 nearly complete** — engine, keystore, daemon, XPR signing, quotas, on-chain policy contract + cache, and interactive onboarding all implemented and tested. Not production-ready. First target chain: [XPR Network](https://xprnetwork.org).
+> Status: **spec draft v0.4 · Phase 1 XPR MVP functionally complete** — engine, keystore, daemon, XPR signing, quotas, on-chain policy contract + anti-rollback cache, interactive ESR onboarding, hash-chained audit, and an MCP server for agents — all implemented and tested (190 tests). Not yet production-ready (Phase 2 hardening pending). First target chain: [XPR Network](https://xprnetwork.org).
 
 ---
 
@@ -178,7 +178,7 @@ Requirements: Node.js ≥ 22.
 
 ```bash
 npm install
-npm test          # unit + adversarial test suite (132 tests)
+npm test          # unit + adversarial test suite (178 tests)
 npm run typecheck # strict TypeScript, no emit
 npm run build     # compile to ./dist
 ```

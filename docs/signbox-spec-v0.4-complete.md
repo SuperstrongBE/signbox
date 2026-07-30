@@ -16,7 +16,10 @@
 > - **Onboarding (§10).** Two modes: create a new agent account, or onboard an existing one. The agent's `owner`/`active` are controlled by the authority via an account permission (no authority key needed); the SignBox key lives on a dedicated permission, child of `active`; `linkauth` is out of scope (the developer links it per policy). Session timeout = 2 minutes (the XPR wallet window). The `agent create` CLI is interactive, prompting for chain (XPR only), network, authority, agent, mode and key export policy; flags remain for scripted use.
 > - **Policy cache freshness.** 30 s background refresh; financial policies re-confirmed within 10 s; strict fail-closed (§14.3–14.4). Anti-rollback watermark persisted across restarts (§14.5).
 > - **Multi-action limit hardening (§8.7).** `maxPerTransaction` now aggregates the SUM of a rule's matching actions in the transaction (not per action); new top-level `maxActionsPerTransaction` (default 1) refuses multi-action transactions unless the policy opts in; new count-based rate limits `maxCountPerHour` / `maxCountPerDay` / `maxCountPerRecipientPerHour`, counting each action.
+> - **Audit & agent surfaces implemented (§16, §11.7).** The audit trail is a hash-chained SQLite log (each entry embeds the previous entry's hash; `signbox audit verify` detects any edit or deletion), recording only the decision, `contract::action` names, rule ids, policy version and digest — never a secret or transaction data. The official MCP server ships the minimal safe tool surface (list/info/inspect/explain/sign, and push only when explicitly enabled), plus `llms.txt` / `llms-full.txt`.
 > - Open questions #2, #3, #4, #5 and #10 are resolved accordingly (§19).
+>
+> **Phase 1 (XPR MVP) is functionally complete** as of this revision: engine, keystore, JSON decoding, daemon, XPR signing, quotas, on-chain policy contract + anti-rollback cache, interactive ESR onboarding, zero-config, multi-action hardening, hash-chained audit, and the MCP server — all implemented and tested (190 tests: 178 daemon + 12 contract).
 
 ---
 
@@ -1065,12 +1068,12 @@ All these commands accept the transaction **only as unserialized JSON** (INV-014
 
 SignBox must ship from the MVP:
 
-- `llms.txt`: short capability map;
-- `llms-full.txt`: full concatenated documentation;
-- a JSON Schema reference for requests/responses;
-- an official MCP server;
-- an integration skill explaining the invariants and the correct call order;
-- LLM-free client examples to prove the protocol remains deterministic.
+- `llms.txt`: short capability map — **implemented (v0.4)**;
+- `llms-full.txt`: full agent reference (input format, refusal codes, policy language) — **implemented (v0.4)**;
+- an official MCP server (`signbox-mcp`, stdio) with the minimal safe tool surface — **implemented (v0.4)**;
+- a JSON Schema reference for requests/responses — planned;
+- an integration skill explaining the invariants and the correct call order — planned;
+- LLM-free client examples to prove the protocol remains deterministic — planned.
 
 Minimal MCP tools:
 
@@ -1335,7 +1338,7 @@ Never log:
 - decrypted keystore;
 - full sensitive transaction if the confidentiality policy forbids it.
 
-Plan for:
+Implemented (v0.4):
 
 ```bash
 signbox audit tail
@@ -1343,7 +1346,7 @@ signbox audit query --agent superagent --since 24h
 signbox audit verify
 ```
 
-The journal may be hash-chained to detect tampering.
+The journal **is** hash-chained: each entry embeds the previous entry's hash, so any inserted, deleted or edited entry breaks the chain and is reported by `audit verify`. Entries record only the decision, `contract::action` names, matching rule ids, policy version and the transaction digest — never a key, passphrase, keystore or transaction data value.
 
 ---
 
