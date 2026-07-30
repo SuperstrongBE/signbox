@@ -10,7 +10,7 @@
  * the actions and flow tests.
  */
 
-import { JsonRpc } from "@proton/js";
+import { JsonRpc, Numeric } from "@proton/js";
 // The package is mis-packaged (type:module + CJS main, no exports map), so the
 // bare specifier breaks under Node ESM; import the ESM build directly.
 import { SigningRequest } from "@proton/signing-request/lib/proton-signing-request.m.js";
@@ -249,8 +249,19 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Compare public keys ignoring the PUB_K1_/legacy EOS prefix distinction is
- * out of scope; a strict string compare is used, normalized to trimmed form. */
+/**
+ * Canonicalize a public key so the legacy `EOS…` form and the modern
+ * `PUB_K1_…` form of the SAME key compare equal. get_account may return either
+ * representation; parsing to (type + raw bytes) makes the comparison
+ * format-agnostic.
+ */
 function normalizeKey(key: string | undefined): string {
-  return (key ?? "").trim();
+  const s = (key ?? "").trim();
+  if (s === "") return "";
+  try {
+    const parsed = Numeric.stringToPublicKey(s);
+    return `${parsed.type}:${Buffer.from(parsed.data).toString("hex")}`;
+  } catch {
+    return s;
+  }
 }
