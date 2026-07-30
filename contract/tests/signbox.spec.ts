@@ -1,31 +1,34 @@
 import { expect } from "chai";
 import { Blockchain, expectToThrow } from "@proton/vert";
-import { Checksum256, Serializer } from "@greymass/eosio";
 import { createHash } from "crypto";
 
 /**
  * SignBox contract tests (spec §7).
  *
- * NOTE: these require a successful `npm run build` first (they load the
- * compiled WASM/ABI from target/). See BUILD.md for the pinned toolchain.
+ * Requires a successful `npm run build` first (they load the compiled
+ * WASM/ABI from assembly/target/). See BUILD.md for the pinned toolchain.
  */
 
 const blockchain = new Blockchain();
-const contract = blockchain.createContract("signbox", "target/signbox.contract");
+const contract = blockchain.createContract("signbox", "assembly/target/signbox.contract");
 
 beforeEach(async () => {
   blockchain.resetTables();
   await blockchain.createAccounts("superdev", "otherdev", "superagent", "otheragent");
 });
 
-/** sha256 of the canonical policy string, as a checksum256 hex — matches §8.6. */
+/** sha256 of the canonical policy string, hex — matches §8.6 / the contract. */
 function hashOf(policyJson: string): string {
   return createHash("sha256").update(Buffer.from(policyJson, "utf8")).digest("hex");
 }
 
 /** A minimal canonical (RFC 8785-shaped) empty policy. Keys already sorted. */
-const EMPTY_POLICY = '{"chain":{"chainId":"' + "a".repeat(64) + '","name":"XPR"},"default":"deny","rules":[],"schemaVersion":1}';
+const EMPTY_POLICY =
+  '{"chain":{"chainId":"' + "a".repeat(64) + '","name":"XPR"},"default":"deny","rules":[],"schemaVersion":1}';
 const EMPTY_HASH = hashOf(EMPTY_POLICY);
+
+/** vert reports contract assertions with an `eosio_assert: ` prefix. */
+const asserts = (message: string): string => `eosio_assert: ${message}`;
 
 const rows = () => contract.tables.policies().getTableRows();
 
@@ -39,7 +42,7 @@ describe("createpolicy", () => {
     expect(row.authority).to.equal("superdev");
     expect(row.agentperm).to.equal("xp2vr3");
     expect(row.version).to.equal(1);
-    expect(row.enabled).to.equal(1);
+    expect(row.enabled).to.equal(true);
   });
 
   it("requires the authority signature", async () => {
@@ -56,7 +59,7 @@ describe("createpolicy", () => {
       contract.actions
         .createpolicy(["superagent", "superdev", "xp2vr3", 1, "b".repeat(64), EMPTY_POLICY])
         .send("superdev@active"),
-      "policy hash does not match the canonical policy json",
+      asserts("policy hash does not match the canonical policy json"),
     );
   });
 
@@ -65,7 +68,7 @@ describe("createpolicy", () => {
       contract.actions
         .createpolicy(["ghostagent11", "superdev", "xp2vr3", 1, EMPTY_HASH, EMPTY_POLICY])
         .send("superdev@active"),
-      "agent account does not exist",
+      asserts("agent account does not exist"),
     );
   });
 
@@ -74,7 +77,7 @@ describe("createpolicy", () => {
       contract.actions
         .createpolicy(["superagent", "superdev", "xp2vr3", 2, EMPTY_HASH, EMPTY_POLICY])
         .send("superdev@active"),
-      "initial policy version must be 1",
+      asserts("initial policy version must be 1"),
     );
   });
 
@@ -86,13 +89,14 @@ describe("createpolicy", () => {
       contract.actions
         .createpolicy(["superagent", "superdev", "xp2vr3", 1, EMPTY_HASH, EMPTY_POLICY])
         .send("superdev@active"),
-      "a policy already exists for this agent",
+      asserts("a policy already exists for this agent"),
     );
   });
 });
 
 describe("setpolicy", () => {
-  const V2 = '{"chain":{"chainId":"' + "a".repeat(64) + '","name":"XPR"},"default":"deny","rules":[{"effect":"allow","id":"r1","match":{"contract":"eosio.token"}}],"schemaVersion":1}';
+  const V2 =
+    '{"chain":{"chainId":"' + "a".repeat(64) + '","name":"XPR"},"default":"deny","rules":[{"effect":"allow","id":"r1","match":{"contract":"eosio.token"}}],"schemaVersion":1}';
   const V2_HASH = hashOf(V2);
 
   beforeEach(async () => {
@@ -110,7 +114,7 @@ describe("setpolicy", () => {
     await contract.actions.setpolicy(["superagent", 2, V2_HASH, V2]).send("superdev@active");
     await expectToThrow(
       contract.actions.setpolicy(["superagent", 2, V2_HASH, V2]).send("superdev@active"),
-      "policy version must strictly increase",
+      asserts("policy version must strictly increase"),
     );
   });
 
@@ -131,9 +135,9 @@ describe("disable / enable", () => {
 
   it("disables and re-enables under the authority", async () => {
     await contract.actions.disable(["superagent"]).send("superdev@active");
-    expect(rows()[0].enabled).to.equal(0);
+    expect(rows()[0].enabled).to.equal(false);
     await contract.actions.enable(["superagent"]).send("superdev@active");
-    expect(rows()[0].enabled).to.equal(1);
+    expect(rows()[0].enabled).to.equal(true);
   });
 
   it("rejects disable from a non-authority", async () => {
