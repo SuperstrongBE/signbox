@@ -16,6 +16,7 @@
 import { Command } from "commander";
 import { createRequire } from "node:module";
 import { readFileSync, statSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { JsonRpc } from "@proton/js";
 import { decodeXprTransaction } from "../chains/xpr/decode.js";
 import { XPR_CHAIN, XPR_NETWORKS } from "../chains/xpr/networks.js";
@@ -34,7 +35,7 @@ import { DEFAULT_CONFIG_PATH, expandPath, loadConfig, chainContextOf } from "./c
 import { promptPassphrase } from "./passphrase.js";
 import { isInteractive, promptText, promptChoice, validateAccountName } from "./prompt.js";
 import { adminCommand, readToken, signViaDaemon } from "./client.js";
-import { startDaemonFromConfig } from "./daemonRunner.js";
+import { startDaemonFromConfig, discoverKeystores } from "./daemonRunner.js";
 import type { ChainContext } from "../core/types.js";
 
 const require = createRequire(import.meta.url);
@@ -92,19 +93,11 @@ program
     }
 
     if (config !== undefined) {
-      for (const agent of config.agents) {
-        const keystoreOk = existsSync(agent.keystorePath);
-        let permsOk = false;
-        if (keystoreOk) {
-          permsOk = (statSync(agent.keystorePath).mode & 0o077) === 0;
-        }
-        push(`keystore ${agent.agent}`, keystoreOk && permsOk, keystoreOk ? undefined : "missing");
-        try {
-          validatePolicy(JSON.parse(readFileSync(agent.policyPath, "utf8")));
-          push(`policy ${agent.agent}`, true);
-        } catch (error) {
-          push(`policy ${agent.agent}`, false, (error as Error).message);
-        }
+      const keystores = discoverKeystores(config.keystoreDir);
+      push(`keystores in ${config.keystoreDir}`, true, `${keystores.length} found`);
+      for (const keystorePath of keystores) {
+        const permsOk = existsSync(keystorePath) && (statSync(keystorePath).mode & 0o077) === 0;
+        push(`keystore ${keystorePath.split("/").pop()}`, permsOk, permsOk ? "0600" : "bad perms");
       }
 
       push("daemon socket", existsSync(config.socketPath), config.socketPath);
@@ -123,6 +116,15 @@ program
         }
       } catch (error) {
         push("rpc + pinned chain id", false, (error as Error).message);
+      }
+
+      try {
+        const rpc = new JsonRpc(config.endpoints);
+        pinChainId(rpc, config.chainId);
+        await rpc.get_abi(config.signboxContract);
+        push(`signbox contract ${config.signboxContract}`, true, "deployed");
+      } catch {
+        push(`signbox contract ${config.signboxContract}`, false, "not reachable / not deployed");
       }
     }
 
@@ -239,14 +241,12 @@ tx.command("sign")
   .action(async (options: { agent: string; transaction: string; config: string; push: boolean }) => {
     try {
       const config = loadConfig(options.config);
-      const entry = config.agents.find((a) => a.agent === options.agent);
-      if (entry === undefined) fail(`agent not in config: ${options.agent}`);
       const response = await signViaDaemon({
         socketPath: config.socketPath,
         agent: options.agent,
         context: chainContextOf(config),
         transaction: readJsonFile(options.transaction),
-        token: readToken(entry.tokenPath),
+        token: readToken(join(config.tokenDir, `${options.agent}.token`)),
       });
       if (response.status === "signed" && options.push) {
         const receipt = await pushSigned(config.endpoints, config.chainId, response.signedTransaction);
@@ -310,11 +310,11 @@ daemonCommand
   .action(async (options: { config: string }) => {
     try {
       const config = loadConfig(options.config);
-      const running = await startDaemonFromConfig(config, (agent) =>
-        promptPassphrase(`passphrase for agent "${agent}": `),
+      const running = await startDaemonFromConfig(config, (keystore) =>
+        promptPassphrase(`passphrase for ${keystore}: `),
       );
       process.stderr.write(
-        `signbox daemon listening on ${config.socketPath} (${config.agents.length} agent(s))\n`,
+        `signbox daemon listening on ${config.socketPath} (${running.agents.length} agent(s): ${running.agents.join(", ") || "none"})\n`,
       );
       const shutdown = (): void => {
         void running.shutdown().then(() => process.exit(0));
