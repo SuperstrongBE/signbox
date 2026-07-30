@@ -1,0 +1,20 @@
+{
+  "name": "signbox-telegram-agent",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Example: a Telegram group agent (OpenRouter LLM) that spends through SignBox — the key stays out of the LLM's reach.",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "openai": "^4.77.0",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
