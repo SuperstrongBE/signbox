@@ -58,7 +58,7 @@ The security consequence: **compromising the agent no longer compromises the key
 
 Honesty matters in a security tool:
 
-- The boundary between agent and key is **OS-level isolation** (separate users, socket permissions, peer credentials). A root attacker — or anything running as the daemon's own user — is outside the software guarantee. Hardware-grade non-exportability requires an HSM/TPM (planned, Phase 3).
+- The boundary between agent and key is **OS-level isolation** (separate users, socket permissions, peer credentials). A root attacker — or anything running as the daemon's own user — is outside the software guarantee. Hardware-grade non-exportability requires an HSM/TPM (planned, Phase 3). See [`docs/deployment-hardening.md`](docs/deployment-hardening.md) for how to make that isolation a hard wall (separate users / container, filesystem permissions, systemd, ptrace).
 - Rate limits and daily caps are enforced **locally** and are best-effort; anything that must be absolutely guaranteed belongs on-chain.
 - SignBox protects the key, not the agent's other data. What an agent legitimately knows, it can still leak.
 
