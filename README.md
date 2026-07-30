@@ -103,13 +103,43 @@ The agent's key signs only what the policy allows. Everything administrative —
 
 Declarative, versioned, JSON-Schema-validated, no executable code. An explicit `deny` always beats an `allow`; anything not explicitly allowed is refused.
 
+## Where policies live, and configuration
+
+A policy is **not a local file**. It lives **on-chain**, in the central `signbox` contract — one row per agent account, holding the superior authority, the agent's dedicated permission, a monotonic version, and the policy's canonical JSON + hash. Only the agent's authority can create or change it, by signing an on-chain transaction from an external wallet (never a key SignBox holds).
+
+That is what makes the policy tamper-proof: a compromised agent — or anything with write access to the daemon's host — cannot alter it, because the only gate that matters is the contract's on-chain `requireAuth(authority)`, not a filesystem permission.
+
+The daemon reads the on-chain policy through a local cache that:
+
+- verifies the policy's hash and canonical form before trusting it;
+- **never accepts a lower version than it has already seen** (anti-rollback), so a lying RPC or a restored database can't silently downgrade to a more permissive policy;
+- refreshes every 30 s, and re-confirms a value-moving policy within 10 s before signing;
+- fails closed if the policy can't be confirmed.
+
+**Configuration is zero-config by default.** The daemon uses conventional paths under `~/.signbox/` (keystores, local state, sockets), and serves an agent simply by holding its encrypted keystore. An optional config file exists only for advanced *deployment* settings — RPC endpoints, the contract account, socket paths — never for agents or policies, which come from the keystores and the chain.
+
 ## Project status & roadmap
+
+Phase 1 (XPR MVP) — component status:
+
+| Component | Status |
+|---|---|
+| Deterministic policy engine (deny-by-default, deny>allow, exact-integer limits) | ✅ done |
+| Encrypted-file keystore (Argon2id + XChaCha20-Poly1305, metadata-bound) | ✅ done |
+| Unserialized-JSON transaction decoding & normalization (INV-014) | ✅ done |
+| Unix-socket daemon: authenticated decision pipeline, kill-switch | ✅ done |
+| XPR runtime signing via `@proton/js` (WYSIWYS round-trip, chain-id pinning) | ✅ done |
+| Stateful quota journal (SQLite, atomic reserve/commit) | ✅ done |
+| CLI (`inspect`/`explain`/`sign`/`push`, `doctor`, `daemon`, `key`, `agent`) | ✅ done |
+| On-chain policy contract (AssemblyScript) + anti-rollback policy cache | ✅ done |
+| ESR onboarding (`agent create`) | ⏳ next |
+| Audit log, MCP server, `llms.txt` | ⏳ next |
+
+Later phases:
 
 | Phase | Scope | Status |
 |---|---|---|
-| Spec | Architecture & security specification ([docs/](docs/)) | ✅ draft v0.3 |
-| 1 — XPR MVP | Core engine, encrypted keystore, daemon, XPR adapter, on-chain policy contract, CLI, MCP server | 🚧 in progress |
-| 2 — Hardening | Dedicated OS user, RPC quorum, signed releases, fuzzing, external audit | planned |
+| 2 — Hardening | Dedicated OS user, native peer credentials, RPC quorum, signed releases, fuzzing, external audit | planned |
 | 3 — High assurance | HSM/TPM/PKCS#11 backends, attestation, administrative multisig | planned |
 | 4 — More chains | Additional `ChainAdapter` implementations (the core is chain-agnostic from day one) | planned |
 
@@ -119,9 +149,14 @@ Requirements: Node.js ≥ 22.
 
 ```bash
 npm install
-npm test        # unit + adversarial test suite
-npm run build   # compile TypeScript
+npm test          # unit + adversarial test suite (132 tests)
+npm run typecheck # strict TypeScript, no emit
+npm run build     # compile to ./dist
 ```
+
+The on-chain contract is a separate sub-project under [`contract/`](contract/) (AssemblyScript / `proton-tsc`); see [`contract/BUILD.md`](contract/BUILD.md) for its pinned toolchain and `npm test` (vert).
+
+The test suite includes the specification's adversarial set (§17.4): second-action injection, wrong token contract, homograph symbols, incorrect decimals, chain-id substitution, keystore tampering, concurrent quota-cap bypass, and policy-cache rollback.
 
 The full architecture and threat model live in [`docs/signbox-spec-v0.3-complete.md`](docs/signbox-spec-v0.3-complete.md). Start with §1.1 — it is the reading key for everything else.
 
