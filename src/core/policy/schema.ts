@@ -20,10 +20,15 @@ export type MatchOperator =
 export type MatchValue = string | MatchOperator;
 
 export interface RuleLimits {
+  /** Max TOTAL value moved by this rule's matching actions in one transaction. */
   maxPerTransaction?: string;
   maxPerHour?: string;
   maxPerDay?: string;
   cooldownPerRecipientMs?: number;
+  /** Count-based rate limits: number of matching actions in a window. */
+  maxCountPerHour?: number;
+  maxCountPerDay?: number;
+  maxCountPerRecipientPerHour?: number;
 }
 
 export interface PolicyRule {
@@ -38,6 +43,14 @@ export interface Policy {
   default: "deny";
   chain: { name: string; chainId: string };
   rules: PolicyRule[];
+  /**
+   * Maximum number of actions in a single transaction. Defaults to 1 when
+   * omitted: multi-action transactions are refused unless the policy opts in.
+   * A multi-action transaction is the vector that both multiplies value
+   * limits and smuggles a confused-deputy action (§15.5), so the safe
+   * default is single-action.
+   */
+  maxActionsPerTransaction?: number;
 }
 
 /** Match paths are a closed vocabulary — unknown paths are schema errors. */
@@ -101,6 +114,7 @@ const policyJsonSchema = {
   properties: {
     schemaVersion: { const: 1 },
     default: { const: "deny" },
+    maxActionsPerTransaction: { type: "integer", minimum: 1, maximum: 64 },
     chain: {
       type: "object",
       additionalProperties: false,
@@ -136,6 +150,9 @@ const policyJsonSchema = {
               maxPerHour: { type: "string", minLength: 1, maxLength: 64 },
               maxPerDay: { type: "string", minLength: 1, maxLength: 64 },
               cooldownPerRecipientMs: { type: "integer", minimum: 0, maximum: 86_400_000 },
+              maxCountPerHour: { type: "integer", minimum: 1, maximum: 1_000_000 },
+              maxCountPerDay: { type: "integer", minimum: 1, maximum: 1_000_000 },
+              maxCountPerRecipientPerHour: { type: "integer", minimum: 1, maximum: 1_000_000 },
             },
           },
         },

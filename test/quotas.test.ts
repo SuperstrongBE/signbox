@@ -142,6 +142,60 @@ describe("QuotaJournal", () => {
   });
 });
 
+describe("QuotaJournal — count-based rate limits", () => {
+  let journal: QuotaJournal;
+  beforeEach(() => {
+    journal = new QuotaJournal(":memory:");
+  });
+
+  function countDemand(overrides?: Partial<QuotaDemand>): QuotaDemand {
+    return { ruleId: "r", amount: parseAsset("1.0000 XPR"), recipient: "alice", ...overrides };
+  }
+
+  it("enforces maxCountPerHour (global count per rule)", () => {
+    const d = () => countDemand({ maxCountPerHour: 3 });
+    expect(journal.reserve("superagent", [d()], NOW).ok).toBe(true);
+    expect(journal.reserve("superagent", [d()], NOW).ok).toBe(true);
+    expect(journal.reserve("superagent", [d()], NOW).ok).toBe(true);
+    // 3 already counted, cap 3: the 4th refuses.
+    expect(journal.reserve("superagent", [d()], NOW)).toEqual({ ok: false, reason: "limit" });
+    // The window slides: an hour later it's clear again.
+    expect(journal.reserve("superagent", [d()], NOW + HOUR + 1).ok).toBe(true);
+  });
+
+  it("enforces maxCountPerRecipientPerHour, isolating recipients", () => {
+    const d = (to: string) =>
+      countDemand({ recipient: to, maxCountPerRecipientPerHour: 2 });
+    expect(journal.reserve("superagent", [d("alice")], NOW).ok).toBe(true);
+    expect(journal.reserve("superagent", [d("alice")], NOW).ok).toBe(true);
+    expect(journal.reserve("superagent", [d("alice")], NOW)).toEqual({ ok: false, reason: "limit" });
+    // A different recipient is unaffected.
+    expect(journal.reserve("superagent", [d("bob")], NOW).ok).toBe(true);
+  });
+
+  it("a single multi-action reservation counts every action (Q2)", () => {
+    // Simulates one transaction with 5 actions to the same recipient, cap 3:
+    // the batch is all-or-nothing, so it must refuse.
+    const demands = Array.from({ length: 5 }, () =>
+      countDemand({ maxCountPerRecipientPerHour: 3 }),
+    );
+    expect(journal.reserve("superagent", demands, NOW)).toEqual({ ok: false, reason: "limit" });
+    // Nothing was persisted (all-or-nothing): a later single action still fits.
+    expect(journal.reserve("superagent", [countDemand({ maxCountPerRecipientPerHour: 3 })], NOW).ok).toBe(
+      true,
+    );
+  });
+
+  it("released reservations stop counting", () => {
+    const d = () => countDemand({ maxCountPerHour: 2 });
+    const a = journal.reserve("superagent", [d()], NOW);
+    journal.reserve("superagent", [d()], NOW);
+    expect(journal.reserve("superagent", [d()], NOW).ok).toBe(false);
+    if (a.ok) journal.release(a.reservationId);
+    expect(journal.reserve("superagent", [d()], NOW).ok).toBe(true);
+  });
+});
+
 describe("daemon pipeline with quota journal", () => {
   const TOKEN = "tok_0123456789abcdefghij";
   const KEY: KeyHandle = {

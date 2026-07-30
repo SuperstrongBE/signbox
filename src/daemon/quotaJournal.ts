@@ -104,17 +104,33 @@ export class QuotaJournal {
           if (demand.recipient === undefined) {
             throw new ReserveRefusal("ambiguous");
           }
-          const recent = this.db
-            .prepare(
-              `SELECT COUNT(*) AS n FROM quota_events
-               WHERE agent = ? AND rule_id = ? AND recipient = ?
-                 AND state != 'released' AND created_at_ms > ?`,
-            )
-            .get(agent, demand.ruleId, demand.recipient, nowMs - demand.cooldownPerRecipientMs) as {
-            n: number;
-          };
-          if (recent.n > 0) {
+          if (this.countToRecipient(agent, demand.ruleId, demand.recipient, demand.cooldownPerRecipientMs, nowMs) > 0) {
             throw new ReserveRefusal("cooldown");
+          }
+        }
+
+        // Count-based rate limits (count each matching action). A prior
+        // reservation in this same batch is visible here, so a multi-action
+        // transaction counts every action toward the window.
+        if (demand.maxCountPerHour !== undefined) {
+          if (this.countInWindow(agent, demand.ruleId, HOUR_MS, nowMs) >= demand.maxCountPerHour) {
+            throw new ReserveRefusal("limit");
+          }
+        }
+        if (demand.maxCountPerDay !== undefined) {
+          if (this.countInWindow(agent, demand.ruleId, DAY_MS, nowMs) >= demand.maxCountPerDay) {
+            throw new ReserveRefusal("limit");
+          }
+        }
+        if (demand.maxCountPerRecipientPerHour !== undefined) {
+          if (demand.recipient === undefined) {
+            throw new ReserveRefusal("ambiguous");
+          }
+          if (
+            this.countToRecipient(agent, demand.ruleId, demand.recipient, HOUR_MS, nowMs) >=
+            demand.maxCountPerRecipientPerHour
+          ) {
+            throw new ReserveRefusal("limit");
           }
         }
 
@@ -189,6 +205,35 @@ export class QuotaJournal {
     let total = 0n;
     for (const row of rows) total += BigInt(row.units);
     return total;
+  }
+
+  /** Count of non-released events for a rule in a window (count-based limits). */
+  countInWindow(agent: string, ruleId: string, windowMs: number, nowMs: number): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM quota_events
+         WHERE agent = ? AND rule_id = ? AND state != 'released' AND created_at_ms > ?`,
+      )
+      .get(agent, ruleId, nowMs - windowMs) as { n: number };
+    return row.n;
+  }
+
+  /** Count of non-released events to a recipient for a rule in a window. */
+  countToRecipient(
+    agent: string,
+    ruleId: string,
+    recipient: string,
+    windowMs: number,
+    nowMs: number,
+  ): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM quota_events
+         WHERE agent = ? AND rule_id = ? AND recipient = ?
+           AND state != 'released' AND created_at_ms > ?`,
+      )
+      .get(agent, ruleId, recipient, nowMs - windowMs) as { n: number };
+    return row.n;
   }
 
   private checkWindow(
