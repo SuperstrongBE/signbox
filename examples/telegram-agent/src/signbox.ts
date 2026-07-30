@@ -55,6 +55,9 @@ export async function signAndPush(cfg: SignboxConfig, input: TransferInput): Pro
 
   try {
     const { stdout, stderr, code, spawnError } = await run(cfg.bin, args);
+    console.log(
+      `[signbox] ${input.amount} -> ${input.to} | exit=${code} | ${stdout.trim() || stderr.trim() || "(no output)"}`,
+    );
     if (spawnError === "ENOENT") {
       return {
         ok: false,
@@ -77,11 +80,12 @@ export async function signAndPush(cfg: SignboxConfig, input: TransferInput): Pro
     }
 
     if (isRecord(parsed) && parsed["status"] === "denied") {
+      const denyCode = String(parsed["code"] ?? "DENY");
       return {
         ok: false,
         status: "denied",
-        code: String(parsed["code"] ?? "DENY"),
-        reason: String(parsed["safeReason"] ?? parsed["code"] ?? "refused by policy"),
+        code: denyCode,
+        reason: explainDeny(denyCode, String(parsed["safeReason"] ?? "")),
         detail: parsed,
       };
     }
@@ -89,6 +93,31 @@ export async function signAndPush(cfg: SignboxConfig, input: TransferInput): Pro
     return { ok: false, status: "error", reason: stderr.trim() || `signbox exited with code ${code}`, detail: parsed };
   } finally {
     await unlink(file).catch(() => undefined);
+  }
+}
+
+/**
+ * Turn a raw deny code + safeReason into an accurate, actionable sentence, so
+ * the LLM relays the truth instead of guessing. SCHEMA_INVALID on a well-formed
+ * transfer means the daemon envelope was rejected — almost always a daemon that
+ * is running an OLDER build than the CLI (restart it), NOT a user input problem.
+ */
+function explainDeny(code: string, safeReason: string): string {
+  switch (code) {
+    case "SCHEMA_INVALID":
+      return "SignBox's daemon rejected the request envelope. This is NOT about the account or amount — it usually means the running daemon is an older build than the CLI. Restart the SignBox daemon so both match.";
+    case "DEFAULT_DENY":
+      return "the policy does not allow this transfer (e.g. the amount or the recipient is outside what the policy permits)";
+    case "LIMIT_EXCEEDED":
+      return "a policy limit was hit (amount cap, count, or a per-recipient cooldown)";
+    case "CHAIN_MISMATCH":
+      return "the request targets a different chain/network than the agent's key";
+    case "AGENT_DISABLED":
+      return "this agent is currently disabled (local kill-switch)";
+    case "POLICY_UNAVAILABLE":
+      return "the on-chain policy could not be confirmed right now (fail closed)";
+    default:
+      return safeReason || `refused by policy (${code})`;
   }
 }
 
