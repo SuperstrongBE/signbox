@@ -58,12 +58,17 @@ export async function respond(cfg: LlmConfig, history: ChatCompletionMessagePara
   const messages: ChatCompletionMessageParam[] = [{ role: "system", content: SYSTEM }, ...history];
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const completion = await client.chat.completions.create({
-      model: cfg.model,
-      messages,
-      tools: TOOLS,
-      tool_choice: "auto",
-    });
+    let completion;
+    try {
+      completion = await client.chat.completions.create({
+        model: cfg.model,
+        messages,
+        tools: TOOLS,
+        tool_choice: "auto",
+      });
+    } catch (error) {
+      throw new Error(describeOpenRouterError(cfg.model, error));
+    }
 
     const choice = completion.choices[0]?.message;
     if (!choice) return "…";
@@ -98,6 +103,26 @@ async function runTool(cfg: LlmConfig, name: string, rawArgs: string): Promise<u
     amount: normalizeAmount(args.amount),
     memo: typeof args.memo === "string" ? args.memo : undefined,
   });
+}
+
+/** Turn an OpenRouter/OpenAI SDK error into a message that names the real cause. */
+function describeOpenRouterError(model: string, error: unknown): string {
+  const e = error as {
+    status?: number;
+    message?: string;
+    error?: { message?: string; code?: string | number };
+    code?: string | number;
+  };
+  const detail = e?.error?.message ?? e?.message ?? String(error);
+  const status = e?.status ? ` (HTTP ${e.status})` : "";
+  let hint = "";
+  if (e?.status === 401) hint = " — check OPENROUTER_API_KEY.";
+  else if (e?.status === 402) hint = " — out of OpenRouter credits.";
+  else if (e?.status === 404 || /not a valid model|no endpoints/i.test(detail))
+    hint = ` — set OPENROUTER_MODEL to a valid tool-calling model (e.g. openai/gpt-4o-mini, anthropic/claude-3.5-sonnet). See https://openrouter.ai/models`;
+  else if (/tool|function/i.test(detail))
+    hint = " — this model may not support tool calling; pick one that does.";
+  return `OpenRouter error for model "${model}"${status}: ${detail}${hint}`;
 }
 
 /** Coerce "1 XPR" / "1.0 XPR" / "1" into the strict "1.0000 XPR" the chain wants. */

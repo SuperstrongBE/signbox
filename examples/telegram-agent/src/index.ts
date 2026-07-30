@@ -24,7 +24,7 @@ function requireEnv(name: string, fallback?: string): string {
 
 const cfg: LlmConfig = {
   apiKey: requireEnv("OPENROUTER_API_KEY"),
-  model: requireEnv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet"),
+  model: requireEnv("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
   signbox: {
     bin: requireEnv("SIGNBOX_BIN", "signbox"),
     agent: requireEnv("SIGNBOX_AGENT"),
