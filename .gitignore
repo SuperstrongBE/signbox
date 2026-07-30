@@ -5,4 +5,5 @@ dist/
 .env
 
 # contract build artifacts
-contract/target/
+contract/**/target/
+contract/bun.lock

@@ -8,7 +8,7 @@
     "node": ">=16.0.0"
   },
   "scripts": {
-    "build": "npx proton-asc assembly/signbox.contract.ts --target release",
+    "build": "npx proton-asc assembly/signbox.contract.ts",
     "test": "mocha -s 250 tests/*.spec.ts -r ts-node/register --timeout 20000"
   },
   "dependencies": {
