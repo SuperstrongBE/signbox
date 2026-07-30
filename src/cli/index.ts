@@ -32,6 +32,7 @@ import { evaluatePolicy } from "../core/policy/engine.js";
 import { SignBoxError } from "../core/errors.js";
 import { DEFAULT_CONFIG_PATH, expandPath, loadConfig, chainContextOf } from "./config.js";
 import { promptPassphrase } from "./passphrase.js";
+import { isInteractive, promptText, promptChoice, validateAccountName } from "./prompt.js";
 import { adminCommand, readToken, signViaDaemon } from "./client.js";
 import { startDaemonFromConfig } from "./daemonRunner.js";
 import type { ChainContext } from "../core/types.js";
@@ -345,51 +346,138 @@ const agentCommand = program.command("agent").description("agent administration 
 agentCommand
   .command("create")
   .description("onboard an agent: generate its key, build an ESR for the authority to sign (§10)")
-  .requiredOption("--agent <name>", "agent account name")
-  .requiredOption("--authority <name>", "superior authority account")
-  .requiredOption("--signbox-contract <name>", "SignBox contract account")
-  .requiredOption("--out <path>", "keystore file to create")
-  .option("--network <network>", "XPR network", "testnet")
-  .option("--mode <mode>", "create a new agent account or onboard an existing one", "create")
+  .option("--agent <name>", "agent account name")
+  .option("--authority <name>", "superior authority account")
+  .option("--signbox-contract <name>", "SignBox contract account")
+  .option("--out <path>", "keystore file to create")
+  .option("--chain <chain>", "chain (XPR only for now)")
+  .option("--network <network>", "network (mainnet/testnet)")
+  .option("--mode <mode>", "create a new agent account or onboard an existing one")
+  .option("--export <policy>", "key export policy: non-exportable | encrypted-backup-only")
   .option("--permission <name>", "dedicated permission name (generated if omitted)")
-  .option("--ram-bytes <n>", "RAM to buy for a new account (paid by the authority)", "4096")
-  .option("--scheme <scheme>", "ESR scheme: esr or proton", "esr")
+  .option("--ram-bytes <n>", "RAM to buy for a new account (paid by the authority)")
+  .option("--scheme <scheme>", "ESR scheme: esr or proton")
   .action(
     async (options: {
-      agent: string;
-      authority: string;
-      signboxContract: string;
-      out: string;
-      network: string;
-      mode: string;
+      agent?: string;
+      authority?: string;
+      signboxContract?: string;
+      out?: string;
+      chain?: string;
+      network?: string;
+      mode?: string;
+      export?: string;
       permission?: string;
-      ramBytes: string;
-      scheme: string;
+      ramBytes?: string;
+      scheme?: string;
     }) => {
-      if (options.mode !== "create" && options.mode !== "existing") {
-        fail(`--mode must be "create" or "existing"`);
+      // Resolve every input: use the flag if given; otherwise prompt on a TTY;
+      // otherwise fall back to a default (or fail for the required fields).
+      const req = async (
+        flag: string | undefined,
+        name: string,
+        prompt: () => Promise<string>,
+      ): Promise<string> => {
+        if (flag !== undefined) return flag;
+        if (isInteractive()) return prompt();
+        fail(`missing --${name} (required in non-interactive mode)`);
+      };
+      const def = async <T extends string>(
+        flag: T | undefined,
+        prompt: () => Promise<T>,
+        fallback: T,
+      ): Promise<T> => (flag !== undefined ? flag : isInteractive() ? prompt() : fallback);
+
+      const chain = await def(
+        options.chain,
+        () => promptChoice("Chain:", [{ value: "XPR", label: "XPR Network" }], { default: "XPR" }),
+        "XPR",
+      );
+      if (chain !== "XPR") fail("only the XPR chain is supported for now");
+
+      const network = await def(
+        options.network,
+        () =>
+          promptChoice(
+            "Network:",
+            Object.keys(XPR_NETWORKS).map((n) => ({ value: n, label: n })),
+            { default: "testnet" },
+          ),
+        "testnet",
+      );
+      const context = contextFor(network);
+      const descriptor = XPR_NETWORKS[network];
+
+      const authority = await req(options.authority, "authority", () =>
+        promptText("Authority account (your account name)", { validate: validateAccountName }),
+      );
+      const agent = await req(options.agent, "agent", () =>
+        promptText("Agent account name", { validate: validateAccountName }),
+      );
+      const mode = await def(
+        options.mode,
+        () =>
+          promptChoice(
+            "Mode:",
+            [
+              { value: "create", label: "create a new agent account" },
+              { value: "existing", label: "onboard an existing account" },
+            ],
+            { default: "create" },
+          ),
+        "create",
+      );
+      if (mode !== "create" && mode !== "existing") fail(`--mode must be "create" or "existing"`);
+
+      const exportPolicy = await def(
+        options.export,
+        () =>
+          promptChoice(
+            "Key export policy:",
+            [
+              { value: "non-exportable", label: "non-exportable (recommended)" },
+              { value: "encrypted-backup-only", label: "encrypted-backup-only" },
+            ],
+            { default: "non-exportable" },
+          ),
+        "non-exportable",
+      );
+      if (exportPolicy !== "non-exportable" && exportPolicy !== "encrypted-backup-only") {
+        fail(`--export must be "non-exportable" or "encrypted-backup-only"`);
       }
-      const context = contextFor(options.network);
-      const descriptor = XPR_NETWORKS[options.network];
+
+      const signboxContract = await def(
+        options.signboxContract,
+        () => promptText("SignBox contract account", { default: "signbox" }),
+        "signbox",
+      );
+      const out = await def(
+        options.out,
+        () =>
+          promptText("Keystore file", { default: `~/.signbox/keystores/${agent}.keystore.json` }),
+        `~/.signbox/keystores/${agent}.keystore.json`,
+      );
+      const scheme = options.scheme === "proton" ? "proton" : "esr";
       const permission = options.permission ?? generatePermissionName();
+
       const backend = new XprOnboardingBackend({
         endpoints: descriptor?.endpoints ?? [],
         chainId: context.chainId,
-        signboxContract: options.signboxContract,
-        scheme: options.scheme === "proton" ? "proton" : "esr",
+        signboxContract,
+        scheme,
       });
 
       try {
         const result = await runOnboarding(
           {
             chain: context,
-            authority: options.authority,
-            agent: options.agent,
+            authority,
+            agent,
             permission,
-            mode: options.mode,
-            exportPolicy: "non-exportable",
-            keystorePath: expandPath(options.out),
-            ...(options.mode === "create" ? { ramBytes: Number(options.ramBytes) } : {}),
+            mode,
+            exportPolicy,
+            keystorePath: expandPath(out),
+            ...(mode === "create" ? { ramBytes: Number(options.ramBytes ?? "4096") } : {}),
           },
           {
             backend,
