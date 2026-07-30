@@ -34,6 +34,8 @@ export interface XprOnboardingOptions {
    */
   scheme?: "esr" | "proton" | "proton-dev";
   pollIntervalMs?: number;
+  /** Base URL of the companion web app that opens a wallet session and signs. */
+  companionBaseUrl?: string;
 }
 
 const zlib = {
@@ -45,7 +47,12 @@ export class XprOnboardingBackend implements OnboardingBackend {
   private readonly opts: Required<XprOnboardingOptions>;
 
   constructor(options: XprOnboardingOptions) {
-    this.opts = { scheme: "proton", pollIntervalMs: 3000, ...options };
+    this.opts = {
+      scheme: "proton",
+      pollIntervalMs: 3000,
+      companionBaseUrl: "http://localhost:5173",
+      ...options,
+    };
   }
 
   private rpc(): JsonRpc {
@@ -134,7 +141,30 @@ export class XprOnboardingBackend implements OnboardingBackend {
       { abiProvider: abiProvider as any, zlib, scheme: this.opts.scheme },
     );
 
-    return { esrUri: request.encode(), summary: summarizeActions(actions) };
+    // Companion web link: the full actions travel in the URL hash fragment
+    // (client-side only), so the web app signs EXACTLY these actions. Only
+    // public data is included; the CLI still verifies the landed result
+    // on-chain before activating the key.
+    const payload = {
+      v: 1,
+      kind: "onboard",
+      network: args.input.chain.network,
+      chainId: this.opts.chainId,
+      endpoints: this.opts.endpoints,
+      signboxContract: this.opts.signboxContract,
+      summary: {
+        agent: args.input.agent,
+        authority: args.input.authority,
+        permission: args.input.permission,
+        publicKey: args.agentPublicKey,
+        mode: args.input.mode,
+      },
+      actions,
+    };
+    const fragment = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+    const companionUrl = `${this.opts.companionBaseUrl.replace(/\/$/, "")}/#${fragment}`;
+
+    return { esrUri: request.encode(), summary: summarizeActions(actions), companionUrl };
   }
 
   async waitForConfirmation(agent: string, deadlineMs: number): Promise<{ txid: string } | null> {

@@ -68,6 +68,8 @@ export interface ActionSummary {
 export interface BuiltRequest {
   esrUri: string;
   summary: ActionSummary[];
+  /** Companion web URL: the authority connects a wallet and signs (§11.4, §5.5). */
+  companionUrl?: string;
 }
 
 export interface VerificationResult {
