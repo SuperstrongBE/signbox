@@ -19,7 +19,6 @@ import type { DecodedAction, DecodedTransaction, Decision, DenyCode } from "../t
 import type { MatchValue, Policy, PolicyRule } from "./schema.js";
 import { AmbiguousValueError, AssetError } from "../errors.js";
 import {
-  compareAssets,
   compareBareAmounts,
   parseAsset,
   parseBareAmount,
@@ -45,6 +44,9 @@ export interface QuotaDemand {
   maxPerHour?: AssetAmount;
   maxPerDay?: AssetAmount;
   cooldownPerRecipientMs?: number;
+  maxCountPerHour?: number;
+  maxCountPerDay?: number;
+  maxCountPerRecipientPerHour?: number;
 }
 
 export interface EvaluationResult {
@@ -210,9 +212,21 @@ export function evaluatePolicy(
       }
     }
 
+    // A multi-action transaction is the vector that both multiplies value
+    // limits and smuggles a confused-deputy action (§15.5). The default is
+    // single-action; the policy must explicitly opt into more.
+    const maxActions = policy.maxActionsPerTransaction ?? 1;
+    if (tx.actions.length > maxActions) {
+      return refuse("TOO_MANY_ACTIONS", "transaction has more actions than the policy allows");
+    }
+
     // Every action must be individually allowed (Q8: total refusal otherwise).
     const ruleIds: string[] = [];
     const quotaDemands: QuotaDemand[] = [];
+    // maxPerTransaction is the SUM across all of a rule's matching actions in
+    // this transaction, so N actions cannot multiply a per-transaction cap.
+    const perRuleTotals = new Map<string, { units: bigint; cap: AssetAmount }>();
+
     for (const action of tx.actions) {
       const governing = policy.rules.find((r) => r.effect === "allow" && ruleMatches(action, r, ctx));
       if (governing === undefined) {
@@ -222,16 +236,27 @@ export function evaluatePolicy(
       const limits = governing.limits;
       if (limits !== undefined) {
         const asset = actionAsset(action);
+
         if (limits.maxPerTransaction !== undefined) {
-          if (compareAssets(asset, parseAsset(limits.maxPerTransaction)) > 0) {
-            return refuse("LIMIT_EXCEEDED", "transaction exceeds a policy limit");
+          const cap = parseAsset(limits.maxPerTransaction);
+          // The cap is per symbol; an action of a different symbol under a
+          // value cap would go uncapped — refuse rather than let it through.
+          if (asset.symbol !== cap.symbol || asset.precision !== cap.precision) {
+            throw new AmbiguousValueError("action asset does not match the rule's per-transaction cap");
           }
+          const entry = perRuleTotals.get(governing.id) ?? { units: 0n, cap };
+          entry.units += asset.units;
+          perRuleTotals.set(governing.id, entry);
         }
-        if (
+
+        const wantsWindow =
           limits.maxPerHour !== undefined ||
           limits.maxPerDay !== undefined ||
-          limits.cooldownPerRecipientMs !== undefined
-        ) {
+          limits.cooldownPerRecipientMs !== undefined ||
+          limits.maxCountPerHour !== undefined ||
+          limits.maxCountPerDay !== undefined ||
+          limits.maxCountPerRecipientPerHour !== undefined;
+        if (wantsWindow) {
           const to = action.data["to"];
           const demand: QuotaDemand = { ruleId: governing.id, amount: asset };
           if (typeof to === "string") demand.recipient = to;
@@ -243,10 +268,25 @@ export function evaluatePolicy(
               throw new AmbiguousValueError("cooldownPerRecipientMs requires a string data.to");
             }
           }
+          if (limits.maxCountPerHour !== undefined) demand.maxCountPerHour = limits.maxCountPerHour;
+          if (limits.maxCountPerDay !== undefined) demand.maxCountPerDay = limits.maxCountPerDay;
+          if (limits.maxCountPerRecipientPerHour !== undefined) {
+            demand.maxCountPerRecipientPerHour = limits.maxCountPerRecipientPerHour;
+            if (demand.recipient === undefined) {
+              throw new AmbiguousValueError("maxCountPerRecipientPerHour requires a string data.to");
+            }
+          }
           quotaDemands.push(demand);
         }
       }
       ruleIds.push(governing.id);
+    }
+
+    // Enforce the aggregated per-transaction caps: the SUM, not per action.
+    for (const { units, cap } of perRuleTotals.values()) {
+      if (units > cap.units) {
+        return refuse("LIMIT_EXCEEDED", "transaction exceeds a policy limit");
+      }
     }
 
     return { decision: { effect: "allow", ruleIds, policyVersion: v }, quotaDemands };

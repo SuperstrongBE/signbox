@@ -190,7 +190,9 @@ describe("policy engine — refusals", () => {
       CHAIN,
     );
     const { decision } = evaluatePolicy(tx, SPEC_POLICY, CTX);
-    expect(decision).toMatchObject({ effect: "deny", code: "DEFAULT_DENY" });
+    // The default single-action cap refuses the 2-action transaction outright
+    // (a stronger, earlier refusal than DEFAULT_DENY on the injected action).
+    expect(decision).toMatchObject({ effect: "deny", code: "TOO_MANY_ACTIONS" });
   });
 
   it("denies on chain ID substitution (§17.4)", () => {
@@ -227,6 +229,113 @@ describe("policy engine — refusals", () => {
         throw new Error("expected a refusal");
       }
     }
+  });
+});
+
+/** A transaction with `count` identical XPR transfers to one recipient. */
+function multiTransfer(count: number, quantity: string, to = "alice"): DecodedTransaction {
+  return decodeXprTransaction(
+    {
+      actions: Array.from({ length: count }, () => ({
+        account: "eosio.token",
+        name: "transfer",
+        authorization: [{ actor: "superagent", permission: "xp2vr3" }],
+        data: { from: "superagent", to, quantity, memo: "tip" },
+      })),
+    },
+    CHAIN,
+  );
+}
+
+describe("policy engine — multi-action hardening", () => {
+  it("refuses a multi-action transaction by default (single-action cap)", () => {
+    const { decision } = evaluatePolicy(multiTransfer(2, "1.0000 XPR"), SPEC_POLICY, CTX);
+    expect(decision).toMatchObject({ effect: "deny", code: "TOO_MANY_ACTIONS" });
+  });
+
+  it("max-action-count actions at the per-transaction cap are refused, not multiplied (Q1)", () => {
+    // The XPR decoder already hard-caps a transaction at 16 actions; opt into
+    // that many AND keep a per-transaction cap: the 16 x 1000 aggregate must
+    // be caught even though each action is individually at the cap.
+    const policy = validatePolicy({
+      schemaVersion: 1,
+      default: "deny",
+      maxActionsPerTransaction: 16,
+      chain: { name: "XPR", chainId: CHAIN_ID },
+      rules: [
+        {
+          id: "allow-xpr",
+          effect: "allow",
+          match: { contract: "eosio.token", action: "transfer", "data.from": "$agent" },
+          limits: { maxPerTransaction: "1000.0000 XPR" },
+        },
+      ],
+    });
+    const { decision } = evaluatePolicy(multiTransfer(16, "1000.0000 XPR"), policy, CTX);
+    expect(decision).toMatchObject({ effect: "deny", code: "LIMIT_EXCEEDED" });
+  });
+
+  it("aggregates maxPerTransaction across actions (sum, not per-action)", () => {
+    const policy = validatePolicy({
+      schemaVersion: 1,
+      default: "deny",
+      maxActionsPerTransaction: 10,
+      chain: { name: "XPR", chainId: CHAIN_ID },
+      rules: [
+        {
+          id: "allow-xpr",
+          effect: "allow",
+          match: { contract: "eosio.token", action: "transfer", "data.from": "$agent" },
+          limits: { maxPerTransaction: "100.0000 XPR" },
+        },
+      ],
+    });
+    // 2 x 40 = 80 <= 100: allowed.
+    expect(evaluatePolicy(multiTransfer(2, "40.0000 XPR"), policy, CTX).decision.effect).toBe("allow");
+    // 3 x 40 = 120 > 100: refused.
+    expect(evaluatePolicy(multiTransfer(3, "40.0000 XPR"), policy, CTX).decision).toMatchObject({
+      effect: "deny",
+      code: "LIMIT_EXCEEDED",
+    });
+  });
+
+  it("allows a multi-action transaction when the policy opts in and stays within caps", () => {
+    const policy = validatePolicy({
+      schemaVersion: 1,
+      default: "deny",
+      maxActionsPerTransaction: 5,
+      chain: { name: "XPR", chainId: CHAIN_ID },
+      rules: [
+        {
+          id: "allow-xpr",
+          effect: "allow",
+          match: { contract: "eosio.token", action: "transfer", "data.from": "$agent" },
+        },
+      ],
+    });
+    expect(evaluatePolicy(multiTransfer(3, "1.0000 XPR"), policy, CTX).decision.effect).toBe("allow");
+  });
+
+  it("emits a count demand per action for count-based limits", () => {
+    const policy = validatePolicy({
+      schemaVersion: 1,
+      default: "deny",
+      maxActionsPerTransaction: 5,
+      chain: { name: "XPR", chainId: CHAIN_ID },
+      rules: [
+        {
+          id: "allow-xpr",
+          effect: "allow",
+          match: { contract: "eosio.token", action: "transfer", "data.from": "$agent" },
+          limits: { maxCountPerRecipientPerHour: 3 },
+        },
+      ],
+    });
+    const { quotaDemands } = evaluatePolicy(multiTransfer(3, "1.0000 XPR"), policy, CTX);
+    expect(quotaDemands).toHaveLength(3);
+    expect(quotaDemands.every((d) => d.maxCountPerRecipientPerHour === 3 && d.recipient === "alice")).toBe(
+      true,
+    );
   });
 });
 
