@@ -28,8 +28,11 @@ export interface XprOnboardingOptions {
   endpoints: string[];
   chainId: string;
   signboxContract: string;
-  /** ESR scheme; "esr" is broadly compatible, "proton" targets WebAuth. */
-  scheme?: "esr" | "proton";
+  /**
+   * Signing-request scheme. The XPR WebAuth wallet requires `proton`
+   * (mainnet) or `proton-dev` (testnet); `esr` is the generic Anchor scheme.
+   */
+  scheme?: "esr" | "proton" | "proton-dev";
   pollIntervalMs?: number;
 }
 
@@ -42,7 +45,7 @@ export class XprOnboardingBackend implements OnboardingBackend {
   private readonly opts: Required<XprOnboardingOptions>;
 
   constructor(options: XprOnboardingOptions) {
-    this.opts = { scheme: "esr", pollIntervalMs: 3000, ...options };
+    this.opts = { scheme: "proton", pollIntervalMs: 3000, ...options };
   }
 
   private rpc(): JsonRpc {

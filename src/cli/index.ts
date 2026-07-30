@@ -357,7 +357,7 @@ agentCommand
   .option("--export <policy>", "key export policy: non-exportable | encrypted-backup-only")
   .option("--permission <name>", "dedicated permission name (generated if omitted)")
   .option("--ram-bytes <n>", "RAM to buy for a new account (paid by the authority)")
-  .option("--scheme <scheme>", "ESR scheme: esr or proton")
+  .option("--scheme <scheme>", "signing-request scheme: proton | proton-dev | esr (default from network)")
   .action(
     async (options: {
       agent?: string;
@@ -456,7 +456,17 @@ agentCommand
           promptText("Keystore file", { default: `~/.signbox/keystores/${agent}.keystore.json` }),
         `~/.signbox/keystores/${agent}.keystore.json`,
       );
-      const scheme = options.scheme === "proton" ? "proton" : "esr";
+      // The XPR WebAuth wallet needs the `proton` (mainnet) / `proton-dev`
+      // (testnet) scheme; default from the network, overridable via --scheme.
+      const schemes = ["esr", "proton", "proton-dev"] as const;
+      type Scheme = (typeof schemes)[number];
+      let scheme: Scheme = network === "mainnet" ? "proton" : "proton-dev";
+      if (options.scheme !== undefined) {
+        if (!schemes.includes(options.scheme as Scheme)) {
+          fail(`--scheme must be one of: ${schemes.join(", ")}`);
+        }
+        scheme = options.scheme as Scheme;
+      }
       const permission = options.permission ?? generatePermissionName();
 
       const backend = new XprOnboardingBackend({
