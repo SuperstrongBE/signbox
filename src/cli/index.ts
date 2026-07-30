@@ -4,8 +4,9 @@
  *
  * Semantics (§11.6):
  * - `transaction inspect`  decodes without policy and without signing;
- * - `transaction explain`  evaluates the agent's ON-CHAIN policy without
- *                          signing (same integrity gate as the daemon);
+ * - `transaction explain`  evaluates the agent's on-chain policy without
+ *                          signing (same integrity gate as the daemon), or a
+ *                          local --policy file to test one before deploying;
  * - `transaction sign`     asks the RUNNING DAEMON to sign (the CLI holds
  *                          no key and evaluates no policy on this path);
  * - `transaction push`     broadcasts an already-signed transaction;
@@ -28,6 +29,7 @@ import { promoteKeystoreFile, destroyKeystoreFile } from "../keystore/encryptedF
 import qrcodeTerminal from "qrcode-terminal";
 import { pinChainId } from "../chains/xpr/adapter.js";
 import { createKeystoreFile } from "../keystore/encryptedFile.js";
+import { validatePolicy } from "../core/policy/schema.js";
 import { verifyStoredPolicy } from "../core/policy/onchain.js";
 import { evaluatePolicy } from "../core/policy/engine.js";
 import { ChainPolicyReader } from "../daemon/chainPolicyReader.js";
@@ -198,55 +200,86 @@ tx.command("inspect")
   });
 
 tx.command("explain")
-  .description("evaluate the agent's ON-CHAIN policy against a transaction — no signature (§11.6)")
+  .description(
+    "evaluate a transaction against the agent's on-chain policy — or a local --policy to test one before deploying (§11.6)",
+  )
   .requiredOption("--agent <name>", "agent account name")
   .requiredOption("--transaction <file>", "transaction JSON file")
+  .option("--policy <file>", "evaluate this LOCAL policy instead of the on-chain one (test an undeployed policy)")
+  .option("--permission <name>", "agent permission (only with --policy; on-chain derives it from the row)")
+  .option("--policy-version <n>", "policy version to report (only with --policy)")
   .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
   .option("--network <network>", "override the network (endpoints, chain id)")
   .action(
-    async (options: { agent: string; transaction: string; config: string; network?: string }) => {
+    async (options: {
+      agent: string;
+      transaction: string;
+      policy?: string;
+      permission?: string;
+      policyVersion?: string;
+      config: string;
+      network?: string;
+    }) => {
       try {
-        // The policy is the on-chain source of truth (INV-004) — read it, never
-        // a local file. Permission and version come from the row too, so a
-        // dry-run reflects exactly what the daemon would enforce.
         const config = loadConfig(
           options.config,
           options.network !== undefined ? { network: options.network } : {},
         );
         const context = chainContextOf(config);
-        const reader = new ChainPolicyReader({
-          endpoints: config.endpoints,
-          chainId: config.chainId,
-          contractAccount: config.signboxContract,
-        });
-        const raw = await reader.read(options.agent);
-        if (raw === null) {
-          fail(
-            `no on-chain policy for agent "${options.agent}" in contract "${config.signboxContract}" on ${config.network}`,
-          );
+
+        // Resolve the policy to evaluate. Default: the on-chain policy is the
+        // source of truth (INV-004). Override: a local --policy file lets an
+        // author test a policy BEFORE deploying it — schema-validated only (no
+        // hash/canonical gate, since a hand-authored file has neither yet).
+        let policy;
+        let agentPermission: string;
+        let policyVersion: number;
+        let source: string;
+        let meta: Record<string, unknown> = {};
+        if (options.policy !== undefined) {
+          policy = validatePolicy(readJsonFile(options.policy));
+          agentPermission = options.permission ?? "active";
+          policyVersion = Number(options.policyVersion ?? "1");
+          source = "local-file";
+          meta = { policyFile: options.policy };
+        } else {
+          const raw = await new ChainPolicyReader({
+            endpoints: config.endpoints,
+            chainId: config.chainId,
+            contractAccount: config.signboxContract,
+          }).read(options.agent);
+          if (raw === null) {
+            fail(
+              `no on-chain policy for agent "${options.agent}" in contract "${config.signboxContract}" on ${config.network} (deploy one, or pass --policy <file> to test locally)`,
+            );
+          }
+          // Same integrity gate the daemon cache applies (§8.6): hash +
+          // canonical JCS + schema. A tampered row is refused, never dry-run.
+          const verified = verifyStoredPolicy(raw.policyjson, raw.policyhash);
+          if (!verified.ok) {
+            fail(`on-chain policy failed integrity check: ${verified.reason}`);
+          }
+          policy = verified.policy;
+          agentPermission = raw.agentperm;
+          policyVersion = raw.version;
+          source = "on-chain";
+          meta = { contract: config.signboxContract, enabled: raw.enabled, policyhash: raw.policyhash };
         }
-        // Same integrity gate the daemon cache applies (§8.6): hash + canonical
-        // JCS + schema. A tampered row is refused, never dry-run against.
-        const verified = verifyStoredPolicy(raw.policyjson, raw.policyhash);
-        if (!verified.ok) {
-          fail(`on-chain policy failed integrity check: ${verified.reason}`);
-        }
+
         const decoded = decodeXprTransaction(readJsonFile(options.transaction), context);
-        const result = evaluatePolicy(decoded, verified.policy, {
+        const result = evaluatePolicy(decoded, policy, {
           agent: options.agent,
-          agentPermission: raw.agentperm,
+          agentPermission,
           chainId: context.chainId,
-          policyVersion: raw.version,
+          policyVersion,
         });
         print({
           agent: options.agent,
-          source: "on-chain",
-          contract: config.signboxContract,
+          source,
           network: config.network,
-          version: raw.version,
-          permission: raw.agentperm,
-          enabled: raw.enabled,
-          policyhash: raw.policyhash,
+          version: policyVersion,
+          permission: agentPermission,
+          ...meta,
           decision: result.decision,
           statefulLimits: result.quotaDemands.length,
         });

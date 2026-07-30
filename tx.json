@@ -6,10 +6,10 @@
         "authorization": [{ "actor": "funagent", "permission": "active" }],
         "data": {
           "from": "funagent",
-          "to": "alice",
+          "to": "rockerone",
           "quantity": "1.0000 XPR",
           "memo": "signbox test"
         }
       }
-    ]
-  }
+  ] 
+}
