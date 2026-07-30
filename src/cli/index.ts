@@ -33,7 +33,7 @@ import { evaluatePolicy } from "../core/policy/engine.js";
 import { SignBoxError } from "../core/errors.js";
 import { DEFAULT_CONFIG_PATH, expandPath, loadConfig, chainContextOf } from "./config.js";
 import { promptPassphrase } from "./passphrase.js";
-import { isInteractive, promptText, promptChoice, validateAccountName } from "./prompt.js";
+import { isInteractive, promptText, promptSelect, validateAccountName } from "./prompt.js";
 import { adminCommand, readToken, signViaDaemon } from "./client.js";
 import { startDaemonFromConfig, discoverKeystores } from "./daemonRunner.js";
 import { AuditLog } from "../daemon/auditLog.js";
@@ -391,7 +391,7 @@ agentCommand
 
       const chain = await def(
         options.chain,
-        () => promptChoice("Chain:", [{ value: "XPR", label: "XPR Network" }], { default: "XPR" }),
+        () => promptSelect("Chain:", [{ value: "XPR", label: "XPR Network" }], { default: "XPR" }),
         "XPR",
       );
       if (chain !== "XPR") fail("only the XPR chain is supported for now");
@@ -399,7 +399,7 @@ agentCommand
       const network = await def(
         options.network,
         () =>
-          promptChoice(
+          promptSelect(
             "Network:",
             Object.keys(XPR_NETWORKS).map((n) => ({ value: n, label: n })),
             { default: "testnet" },
@@ -418,7 +418,7 @@ agentCommand
       const mode = await def(
         options.mode,
         () =>
-          promptChoice(
+          promptSelect(
             "Mode:",
             [
               { value: "create", label: "create a new agent account" },
@@ -433,7 +433,7 @@ agentCommand
       const exportPolicy = await def(
         options.export,
         () =>
-          promptChoice(
+          promptSelect(
             "Key export policy:",
             [
               { value: "non-exportable", label: "non-exportable (recommended)" },
@@ -447,11 +447,9 @@ agentCommand
         fail(`--export must be "non-exportable" or "encrypted-backup-only"`);
       }
 
-      const signboxContract = await def(
-        options.signboxContract,
-        () => promptText("SignBox contract account", { default: "signbox" }),
-        "signbox",
-      );
+      // The SignBox contract account is deployment config, never asked at
+      // onboarding: default "signbox", overridable only by the flag.
+      const signboxContract = options.signboxContract ?? "signbox";
       const out = await def(
         options.out,
         () =>
