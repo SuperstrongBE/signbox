@@ -90,19 +90,25 @@ export function buildOnboardingActions(input: BuildActionsInput): OnboardingActi
     }
   }
 
-  // Create the dedicated agent permission holding the SignBox key, child of
-  // active. Authorized by agent@active (satisfied by the authority's key).
-  actions.push({
-    account: "eosio",
-    name: "updateauth",
-    authorization: [{ actor: input.agent, permission: "active" }],
-    data: {
-      account: input.agent,
-      permission: input.permission,
-      parent: "active",
-      auth: keyAuthority(input.agentPublicKey),
-    },
-  });
+  // TEMPORARILY DISABLED: XPR Network currently blacklists `eosio::updateauth`
+  // in a signing request, so this action is commented out. As a result the
+  // dedicated agent permission is NOT created during onboarding — the SignBox
+  // key must be placed on the agent account by another mechanism for now
+  // (e.g. WebAuth), and verifyLanded skips the permission check accordingly.
+  //
+  // // Create the dedicated agent permission holding the SignBox key, child of
+  // // active. Authorized by agent@active (satisfied by the authority's key).
+  // actions.push({
+  //   account: "eosio",
+  //   name: "updateauth",
+  //   authorization: [{ actor: input.agent, permission: "active" }],
+  //   data: {
+  //     account: input.agent,
+  //     permission: input.permission,
+  //     parent: "active",
+  //     auth: keyAuthority(input.agentPublicKey),
+  //   },
+  // });
 
   // Register the empty deny-all policy in the SignBox contract. RAM paid by
   // the authority (it signs and is the payer of the row).

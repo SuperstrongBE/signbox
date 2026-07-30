@@ -189,23 +189,28 @@ export class XprOnboardingBackend implements OnboardingBackend {
       return { ok: false, reason: "agent account not found" };
     }
 
-    // The dedicated permission must carry exactly the agent's public key.
-    let account: { permissions?: unknown[] };
-    try {
-      account = (await this.rpc().get_account(args.input.agent)) as { permissions?: unknown[] };
-    } catch {
-      return { ok: false, reason: "cannot read agent account" };
-    }
-    const perm = (account.permissions ?? []).find(
-      (p) => (p as { perm_name?: string }).perm_name === args.input.permission,
-    ) as { required_auth?: { keys?: { key?: string }[] } } | undefined;
-    if (perm === undefined) {
-      return { ok: false, reason: "dedicated permission not found" };
-    }
-    const keys = perm.required_auth?.keys ?? [];
-    if (!keys.some((k) => normalizeKey(k.key) === normalizeKey(args.agentPublicKey))) {
-      return { ok: false, reason: "dedicated permission does not hold the agent key" };
-    }
+    // TEMPORARILY DISABLED alongside the updateauth action (XPR blacklists
+    // updateauth in signing requests): the dedicated permission is not created
+    // during onboarding, so we cannot check it here yet. Re-enable this block
+    // once the permission is provisioned (see actions.ts).
+    //
+    // // The dedicated permission must carry exactly the agent's public key.
+    // let account: { permissions?: unknown[] };
+    // try {
+    //   account = (await this.rpc().get_account(args.input.agent)) as { permissions?: unknown[] };
+    // } catch {
+    //   return { ok: false, reason: "cannot read agent account" };
+    // }
+    // const perm = (account.permissions ?? []).find(
+    //   (p) => (p as { perm_name?: string }).perm_name === args.input.permission,
+    // ) as { required_auth?: { keys?: { key?: string }[] } } | undefined;
+    // if (perm === undefined) {
+    //   return { ok: false, reason: "dedicated permission not found" };
+    // }
+    // const keys = perm.required_auth?.keys ?? [];
+    // if (!keys.some((k) => normalizeKey(k.key) === normalizeKey(args.agentPublicKey))) {
+    //   return { ok: false, reason: "dedicated permission does not hold the agent key" };
+    // }
 
     // The policy row must exist with the expected authority, permission and
     // the empty-policy hash — proving the landed tx matches the request.

@@ -210,22 +210,21 @@ describe("onboarding actions (§10.2 step 7)", () => {
     emptyPolicyHash: "a".repeat(64),
   };
 
-  it("create mode builds newaccount, buyrambytes, updateauth, createpolicy", () => {
+  // NOTE: updateauth is temporarily disabled (XPR blacklists it in signing
+  // requests), so it is absent from the action set for now (see actions.ts).
+  it("create mode builds newaccount, buyrambytes, createpolicy (updateauth disabled)", () => {
     const actions = buildOnboardingActions({ ...base, mode: "create", ramBytes: 4096 });
     expect(actions.map((a) => `${a.account}::${a.name}`)).toEqual([
       "eosio::newaccount",
       "eosio::buyrambytes",
-      "eosio::updateauth",
       "signbox::createpolicy",
     ]);
+    expect(actions.some((a) => a.name === "updateauth")).toBe(false);
   });
 
-  it("existing mode builds only updateauth and createpolicy", () => {
+  it("existing mode builds only createpolicy (updateauth disabled)", () => {
     const actions = buildOnboardingActions({ ...base, mode: "existing" });
-    expect(actions.map((a) => `${a.account}::${a.name}`)).toEqual([
-      "eosio::updateauth",
-      "signbox::createpolicy",
-    ]);
+    expect(actions.map((a) => `${a.account}::${a.name}`)).toEqual(["signbox::createpolicy"]);
   });
 
   it("the authority pays RAM", () => {
@@ -250,15 +249,11 @@ describe("onboarding actions (§10.2 step 7)", () => {
     });
   });
 
-  it("puts the SignBox key on the dedicated permission, child of active", () => {
+  it("does not create the dedicated permission while updateauth is disabled", () => {
+    // XPR blacklists updateauth in signing requests; the permission must be
+    // provisioned another way for now. Re-enable this when it is restored.
     const actions = buildOnboardingActions({ ...base, mode: "create" });
-    const updateauth = actions.find((a) => a.name === "updateauth")!;
-    expect(updateauth.data).toMatchObject({
-      account: "superagent",
-      permission: "sbxab12c3",
-      parent: "active",
-      auth: { threshold: 1, keys: [{ key: "PUB_K1_agentkey", weight: 1 }] },
-    });
+    expect(actions.some((a) => a.name === "updateauth")).toBe(false);
   });
 
   it("createpolicy registers version 1 with the empty policy and hash", () => {
