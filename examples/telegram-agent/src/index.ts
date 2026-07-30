@@ -38,6 +38,16 @@ const allowedChat = process.env.TELEGRAM_GROUP_ID;
 const bot = new Telegraf(requireEnv("TELEGRAM_BOT_TOKEN"));
 let botUsername = "";
 
+// Diagnostic: log EVERY update the bot receives, before any handler. If you
+// mention the bot in a group and NOTHING prints here, Telegram never delivered
+// the message — that is Group Privacy (see README: disable it in BotFather AND
+// re-add the bot, or make it admin).
+bot.use((ctx, next) => {
+  const msg = ctx.message as { text?: string } | undefined;
+  console.log(`[update] type=${ctx.updateType} chat=${ctx.chat?.id ?? "?"} text=${msg?.text ?? ""}`);
+  return next();
+});
+
 /** Bounded short-term memory per chat, so the model has a little context. */
 const HISTORY_LIMIT = 12;
 const memory = new Map<number, ChatCompletionMessageParam[]>();
@@ -61,29 +71,64 @@ bot.help((ctx) =>
   ),
 );
 
+/** True when the message @mentions this bot (parsed from Telegram entities). */
+function isMentionOfBot(msg: {
+  text: string;
+  entities?: readonly { type: string; offset: number; length: number }[];
+}): boolean {
+  if (botUsername === "") return false;
+  const target = `@${botUsername.toLowerCase()}`;
+  for (const e of msg.entities ?? []) {
+    if (e.type === "mention" && msg.text.slice(e.offset, e.offset + e.length).toLowerCase() === target) {
+      return true;
+    }
+  }
+  // Fallback for clients that don't tag the mention as an entity.
+  return msg.text.toLowerCase().includes(target);
+}
+
+/** Drop the bot's own @mention from the text so the LLM sees a clean request. */
+function stripMention(text: string): string {
+  if (botUsername === "") return text.trim();
+  return text.replace(new RegExp(`@${botUsername}\\b`, "gi"), "").replace(/\s+/g, " ").trim();
+}
+
 bot.on(message("text"), async (ctx) => {
   const chatId = ctx.chat.id;
-  if (allowedChat && String(chatId) !== allowedChat) return;
-
   const text = ctx.message.text;
-  if (text.startsWith("/")) return; // let command handlers own slash-commands
-
-  // Stay quiet in groups unless addressed (mention or reply), to avoid spam.
   const isPrivate = ctx.chat.type === "private";
-  const lower = text.toLowerCase();
-  const mentionsMe = botUsername !== "" && lower.includes(`@${botUsername.toLowerCase()}`);
+  const mentioned = isMentionOfBot(ctx.message);
   const repliesToMe =
     ctx.message.reply_to_message?.from?.username?.toLowerCase() === botUsername.toLowerCase();
-  if (!isPrivate && !mentionsMe && !repliesToMe) return;
 
+  // Diagnostic: log EVERY text message the bot actually receives. If nothing
+  // prints when you mention it, the bot isn't receiving the message at all —
+  // that's Telegram Group Privacy (see README). Remove once it works.
+  console.log(`[recv ${ctx.chat.type} ${chatId}] mention=${mentioned} reply=${repliesToMe}: ${text}`);
+
+  if (allowedChat && String(chatId) !== allowedChat) {
+    console.log(`  ↳ ignored: chat ${chatId} ≠ TELEGRAM_GROUP_ID ${allowedChat}`);
+    return;
+  }
+  if (text.startsWith("/")) return; // let command handlers own slash-commands
+
+  // Answer only when addressed: a private chat, an @mention of the bot, or a
+  // reply to one of the bot's own messages. Stay quiet otherwise (no spam).
+  if (!isPrivate && !mentioned && !repliesToMe) {
+    console.log("  ↳ ignored: not addressed (mention the bot or reply to it)");
+    return;
+  }
+
+  const request = stripMention(text) || text.trim();
   const who = ctx.from?.username ? `@${ctx.from.username}` : ctx.from?.first_name ?? "someone";
-  const history = remember(chatId, { role: "user", content: `[${who}] ${text}` });
+  console.log(`[${ctx.chat.type} ${chatId}] ${who}: ${request}`);
+  const history = remember(chatId, { role: "user", content: `[${who}] ${request}` });
 
   await ctx.sendChatAction("typing").catch(() => undefined);
   try {
     const reply = await respond(cfg, history);
     remember(chatId, { role: "assistant", content: reply });
-    await ctx.reply(reply);
+    await ctx.reply(reply, { reply_parameters: { message_id: ctx.message.message_id } });
   } catch (error) {
     console.error("turn failed:", error);
     await ctx.reply(`⚠️ ${(error as Error).message}`);
@@ -94,8 +139,16 @@ async function main(): Promise<void> {
   const me = await bot.telegram.getMe();
   botUsername = me.username ?? "";
   // launch() resolves only when the bot stops, so don't await it here.
-  void bot.launch();
+  void bot.launch({ dropPendingUpdates: true });
   console.log(`SignBox Telegram agent running as @${botUsername} (agent account: ${cfg.signbox.agent})`);
+  if (me.can_read_all_group_messages) {
+    console.log("Group Privacy: OFF — the bot reads all group messages ✅");
+  } else {
+    console.log(
+      "Group Privacy: ON ⚠️  — the bot only receives @mentions, replies to it, and commands.\n" +
+        "  If mentions still don't arrive: BotFather → /setprivacy → Disable, then REMOVE and RE-ADD the bot to the group (privacy changes need a re-add), or make it an admin.",
+    );
+  }
 }
 
 process.once("SIGINT", () => bot.stop("SIGINT"));

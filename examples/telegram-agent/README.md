@@ -84,6 +84,29 @@ socket and the agent's local token under `~/.signbox/`.
 The exact allow/deny outcomes are whatever **your on-chain policy** says — the
 bot is just a mouth; SignBox is the gate.
 
+## Troubleshooting: the bot doesn't answer in a group
+
+Almost always **Group Privacy**. By default a bot in a group only receives
+commands, @mentions of it, and replies to it — and privacy changes only take
+effect after re-adding the bot. Fix:
+
+1. **BotFather → `/setprivacy` → your bot → Disable.**
+2. **Remove the bot from the group, then add it back** (required for the change
+   to apply) — or promote it to **admin**.
+
+On startup the bot now prints its privacy state (`Group Privacy: ON/OFF`) and
+logs every update it receives. Mention it and watch the console:
+
+| Console shows | Meaning | Do |
+|---|---|---|
+| *nothing* | Telegram didn't deliver the message | Disable privacy + re-add (above) |
+| `[update] … text=@bot …` then `ignored: not addressed` | received, mention not matched | check the bot's @username; mention it exactly |
+| `[update] …` then `ignored: chat … ≠ TELEGRAM_GROUP_ID` | your allowlist blocks it | fix/empty `TELEGRAM_GROUP_ID` in `.env` |
+| `[recv …] mention=true` then a reply | working ✅ | — |
+
+Other causes: a second instance polling the same token (Telegram 409), or a
+wrong `TELEGRAM_BOT_TOKEN`.
+
 ## Files
 
 | File | Role |
