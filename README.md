@@ -159,7 +159,10 @@ Phase 1 (XPR MVP) — component status:
 | CLI (`inspect`/`explain`/`sign`/`push`, `doctor`, `daemon`, `key`, `agent`) | ✅ done |
 | On-chain policy contract (AssemblyScript) + anti-rollback policy cache | ✅ done |
 | ESR onboarding (`agent create`, interactive) | ✅ done |
-| Audit log, MCP server, `llms.txt` | ⏳ next |
+| Hash-chained audit log (`audit tail/query/verify`) | ✅ done |
+| MCP server + `llms.txt` / `llms-full.txt` for agents | ✅ done |
+
+**Phase 1 (XPR MVP) is functionally complete.** Remaining before production: the Phase 2 hardening below.
 
 Later phases:
 

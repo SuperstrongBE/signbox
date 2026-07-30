@@ -215,6 +215,25 @@ export function openKeystoreFile(filePath: string, passphrase: Buffer): OpenedKe
   }
 }
 
+/**
+ * Read a keystore's public metadata WITHOUT the passphrase. The metadata
+ * (agent, permission, public key, chain) is stored in the file header in
+ * cleartext — the secret is not touched. Used to list agents (INV-002: this
+ * never exposes anything secret).
+ */
+export function readKeystoreMetadata(filePath: string): KeystoreMetadata {
+  let file: KeystoreFileV1;
+  try {
+    file = JSON.parse(readFileSync(filePath, "utf8")) as KeystoreFileV1;
+  } catch {
+    throw new KeystoreError("BAD_FORMAT", `cannot read keystore metadata: ${filePath}`);
+  }
+  if (file.version !== 1 || file.meta === undefined || typeof file.meta.agent !== "string") {
+    throw new KeystoreError("BAD_FORMAT", `keystore has no readable metadata: ${filePath}`);
+  }
+  return file.meta;
+}
+
 export function wipeSecret(secret: Buffer): void {
   sodium.sodium_memzero(secret);
 }

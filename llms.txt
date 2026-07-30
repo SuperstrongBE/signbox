@@ -1,0 +1,54 @@
+# SignBox
+
+> A local controlled-signing daemon. You (the agent) can PROPOSE blockchain
+> transactions; SignBox decodes them, applies a deterministic on-chain policy,
+> and signs or refuses. You never see the private key. The most you can ever
+> do is what the policy already allows.
+
+## What you can and cannot do
+
+- You submit a transaction as **raw, unserialized JSON** (a list of actions).
+  Never send packed bytes, hex, or a hash — they are rejected.
+- You receive **one final answer**: a signed transaction, or a refusal with a
+  safe reason code. Nothing else (no key, no internal state) is returned.
+- You **cannot** read the key, change the policy, create/rotate/export keys, or
+  transfer authority. Those are the human authority's job, via their own wallet.
+- Every decision is deterministic and audited. Retrying a refused transaction
+  unchanged will be refused again.
+
+## MCP tools (this is your interface)
+
+- `signbox_agent_list` — which agents this daemon can sign for (public info).
+- `signbox_agent_info { agent }` — one agent's permission, public key, chain.
+- `signbox_transaction_inspect { transaction }` — decode only; no policy, no sign.
+- `signbox_transaction_explain { agent, transaction }` — dry-run the policy; see
+  whether it would be allowed, WITHOUT signing. (Stateful quota limits are only
+  enforced at sign time.)
+- `signbox_transaction_sign { agent, transaction }` — ask the daemon to sign.
+  Returns `{ status: "signed", ... }` or `{ status: "denied", code, safeReason }`.
+  Signing NEVER broadcasts.
+- `signbox_transaction_push { signedTransaction }` — broadcast an already-signed
+  transaction. Only present if the deployment explicitly enabled it.
+
+## Recommended order
+
+1. `inspect` to confirm the transaction decodes to what you intend.
+2. `explain` to check it against the policy before spending a signature.
+3. `sign` to get the signed transaction.
+4. broadcast it yourself, or `push` if that tool is enabled.
+
+## Transaction shape
+
+```json
+{ "actions": [
+  { "account": "eosio.token", "name": "transfer",
+    "authorization": [{ "actor": "<agent>", "permission": "<agentPermission>" }],
+    "data": { "from": "<agent>", "to": "alice", "quantity": "1.0000 XPR", "memo": "" } }
+] }
+```
+
+By default a transaction may contain only ONE action unless the policy opts in.
+
+## Full reference
+
+See llms-full.txt for the policy language, all refusal codes, and details.

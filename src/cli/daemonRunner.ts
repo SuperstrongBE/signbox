@@ -19,6 +19,7 @@ import { SignBoxDaemon } from "../daemon/server.js";
 import { QuotaJournal } from "../daemon/quotaJournal.js";
 import { PolicyCache } from "../daemon/policyCache.js";
 import { ChainPolicyReader } from "../daemon/chainPolicyReader.js";
+import { AuditLog } from "../daemon/auditLog.js";
 import { XprTransactionSigner } from "../chains/xpr/adapter.js";
 import { decodeXprTransaction } from "../chains/xpr/decode.js";
 import { openKeystoreFile, wipeSecret } from "../keystore/encryptedFile.js";
@@ -80,12 +81,13 @@ export async function startDaemonFromConfig(
       contractAccount: config.signboxContract,
     });
   const policyCache = new PolicyCache(config.stateDbPath, policyReader, {}, overrides.now);
+  const audit = new AuditLog(config.stateDbPath);
 
   const daemon = new SignBoxDaemon(
     { socketPath: config.socketPath, adminSocketPath: config.adminSocketPath },
     overrides.now === undefined
-      ? { decode: decodeXprTransaction, signer, quotas, policyCache }
-      : { decode: decodeXprTransaction, signer, quotas, policyCache, now: overrides.now },
+      ? { decode: decodeXprTransaction, signer, quotas, policyCache, audit }
+      : { decode: decodeXprTransaction, signer, quotas, policyCache, audit, now: overrides.now },
   );
 
   const wipeAll = (): void => {
@@ -154,6 +156,7 @@ export async function startDaemonFromConfig(
     wipeAll();
     policyCache.close();
     quotas.close();
+    audit.close();
     throw error;
   }
 
@@ -165,6 +168,7 @@ export async function startDaemonFromConfig(
       wipeAll();
       policyCache.close();
       quotas.close();
+      audit.close();
     },
   };
 }

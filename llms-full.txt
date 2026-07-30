@@ -1,0 +1,148 @@
+# SignBox — full agent reference
+
+SignBox is a deterministic security boundary between you (a software agent,
+possibly compromised) and a blockchain private key. It behaves like a headless
+wallet whose "approve" button is a deterministic policy engine instead of a
+human. See llms.txt for the short version; this file is the complete reference.
+
+## The mental model
+
+- SignBox is a **black box**. You put in actions (readable JSON), you get back
+  a signed transaction or a refusal. Nothing else leaves the box.
+- You hold a **capability** ("ask for a signature"), not a secret. Compromising
+  you does not compromise the key: they live in different OS processes.
+- Every security decision is made by the policy engine from decoded data — never
+  by an LLM, a prompt, or a field you assert. You cannot argue with it.
+
+## Input format (strict)
+
+The only accepted input is a raw, unserialized JSON transaction:
+
+```json
+{
+  "actions": [
+    {
+      "account": "eosio.token",
+      "name": "transfer",
+      "authorization": [{ "actor": "superagent", "permission": "xp2vr3" }],
+      "data": { "from": "superagent", "to": "alice", "quantity": "1.0000 XPR", "memo": "tip" }
+    }
+  ]
+}
+```
+
+Rejected categorically: packed/serialized transactions, hex `data`, bare hashes,
+`context_free_actions`, `transaction_extensions`, non-zero `delay_sec`, more than
+one authorization per action, and unknown fields. Asset amounts are exact
+integers of minimal units — no floating point, and lookalike/homograph symbols
+are refused.
+
+TAPOS and expiration are set by SignBox at signing time; do not include them.
+
+## MCP tools
+
+| Tool | Input | Returns |
+|---|---|---|
+| `signbox_agent_list` | — | `{ agents: [{ agent, permission, publicKey, chain, network }] }` |
+| `signbox_agent_info` | `{ agent }` | that agent's public metadata |
+| `signbox_transaction_inspect` | `{ transaction }` | `{ context, actions }` (decoded); errors on invalid input |
+| `signbox_transaction_explain` | `{ agent, transaction }` | `{ decision }` — dry run, no signing, no quota reservation |
+| `signbox_transaction_sign` | `{ agent, transaction }` | signed or denied response (below) |
+| `signbox_transaction_push` | `{ signedTransaction }` | broadcast receipt — only if enabled |
+
+The MCP surface intentionally excludes agent creation, key export, policy
+modification and key rotation. Those require the superior authority's wallet.
+
+## Sign response
+
+Signed:
+
+```json
+{ "requestId": "…", "status": "signed", "signature": "SIG_K1_…",
+  "transactionDigest": "…", "signedTransaction": { "signatures": ["…"], "packedTransaction": "…" },
+  "policyVersion": 3 }
+```
+
+Denied:
+
+```json
+{ "requestId": "…", "status": "denied", "code": "DEFAULT_DENY", "safeReason": "…", "policyVersion": 3 }
+```
+
+`safeReason` is a category, never the exact threshold or list — do not try to
+extract limits from it.
+
+## Refusal codes
+
+- `SCHEMA_INVALID` — the request or transaction did not fully decode (INV-014/INV-003).
+- `CHAIN_MISMATCH` — wrong chain/network/chainId.
+- `EMPTY_TRANSACTION` — no action.
+- `MULTI_AUTHORIZATION` — an action had more than one authorization.
+- `TOO_MANY_ACTIONS` — more actions than the policy's `maxActionsPerTransaction` (default 1).
+- `RULE_DENY` — an explicit deny rule matched (deny always wins).
+- `DEFAULT_DENY` — no allow rule matched.
+- `LIMIT_EXCEEDED` — a value or count limit was exceeded (aggregated across the transaction).
+- `AMBIGUOUS_VALUE` — a value could not be compared safely (e.g. wrong precision/symbol).
+- `POLICY_UNAVAILABLE` — the on-chain policy could not be confirmed (fail closed).
+- `AGENT_DISABLED` — the agent is disabled (local kill-switch or on-chain).
+- `QUOTA_UNAVAILABLE` — stateful limits required but no quota journal.
+- `UNAUTHENTICATED` / `REQUEST_EXPIRED` / `NONCE_REUSED` — local request problems.
+- `INTERNAL_ERROR` — anything else. Everything fails closed.
+
+## Policy language (read-only for you; only the authority can change it)
+
+A policy is a JSON document, on-chain, deny-by-default:
+
+```json
+{
+  "schemaVersion": 1,
+  "default": "deny",
+  "maxActionsPerTransaction": 1,
+  "chain": { "name": "XPR", "chainId": "…" },
+  "rules": [
+    {
+      "id": "allow-small-xpr-tips",
+      "effect": "allow",
+      "match": {
+        "contract": "eosio.token",
+        "action": "transfer",
+        "authorization.actor": "$agent",
+        "authorization.permission": "$agentPermission",
+        "data.from": "$agent",
+        "data.quantity.symbol": "XPR",
+        "data.quantity.amount": { "lte": "1000.0000" },
+        "data.to": { "notIn": ["blocked.gm"] }
+      },
+      "limits": {
+        "maxPerTransaction": "1000.0000 XPR",
+        "maxPerHour": "2500.0000 XPR",
+        "maxPerDay": "5000.0000 XPR",
+        "cooldownPerRecipientMs": 60000,
+        "maxCountPerHour": 20,
+        "maxCountPerRecipientPerHour": 3
+      }
+    }
+  ]
+}
+```
+
+- `match` operators: exact string (with `$agent` / `$agentPermission` variables),
+  `{ "lte": … }`, `{ "gte": … }`, `{ "eq": … }`, `{ "in": [...] }`, `{ "notIn": [...] }`.
+- Evaluation: explicit `deny` beats `allow`; every action must be individually
+  allowed or the whole transaction is refused; then limits apply.
+- Limits: value and count limits **aggregate across a transaction's actions**, so
+  splitting a transfer into many actions cannot multiply a cap. Count and cooldown
+  limits count each action. All stateful limits are a local best-effort guarantee;
+  absolute caps are enforced on-chain by native permissions.
+
+## What SignBox does NOT protect
+
+- It protects the key and the signing authority. It does not stop you from
+  leaking other data you legitimately hold.
+- Limits are local best-effort; the chain's native permissions/`linkauth` are the
+  hard, unbypassable bound.
+- A host-root attacker is outside the software guarantee (see the spec §9.3).
+
+## Where to go deeper
+
+Architecture and threat model: docs/signbox-spec-v0.4-complete.md (start at §1.1).

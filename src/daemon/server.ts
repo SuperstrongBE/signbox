@@ -38,6 +38,14 @@ import { parseSignRequest, type SignRequestJson, type SignResponseJson } from ".
 import { NonceCache } from "./nonceCache.js";
 import type { QuotaJournal } from "./quotaJournal.js";
 import type { PolicyCache } from "./policyCache.js";
+import type { AuditLog, AuditEntryInput } from "./auditLog.js";
+
+/** Mutable context populated during a decision, then written to the audit log. */
+interface AuditContext {
+  agent: string;
+  contracts: string[];
+  ruleIds?: string[];
+}
 
 export interface AgentRuntime {
   agent: string;
@@ -95,6 +103,8 @@ export interface DaemonDependencies {
    * unit tests and offline dev, where the registered policy is used.
    */
   policyCache?: PolicyCache;
+  /** Hash-chained audit log (§16). Every decision is recorded when present. */
+  audit?: AuditLog;
   /** Injectable clock for tests. */
   now?: () => number;
 }
@@ -297,10 +307,47 @@ export class SignBoxDaemon {
   }
 
   /**
-   * The decision pipeline (§13). Exposed for direct testing.
-   * NEVER throws: every failure maps to a denied response.
+   * Public entry: run the decision, then record it to the audit log (§16).
+   * NEVER throws: every failure maps to a denied response; an audit failure
+   * never fails a decision.
    */
   async handleRequest(line: string): Promise<SignResponseJson> {
+    const auditCtx: AuditContext = { agent: "unknown", contracts: [] };
+    const response = await this.runDecision(line, auditCtx);
+    this.recordAudit(response, auditCtx);
+    return response;
+  }
+
+  private recordAudit(response: SignResponseJson, auditCtx: AuditContext): void {
+    const audit = this.deps.audit;
+    if (audit === undefined) return;
+    try {
+      const entry: AuditEntryInput = {
+        requestId: response.requestId,
+        agent: auditCtx.agent,
+        decision: response.status === "signed" ? "signed" : "denied",
+        contracts: auditCtx.contracts,
+        timestampMs: this.now(),
+      };
+      if (response.status === "signed") {
+        entry.digest = response.transactionDigest;
+        entry.policyVersion = response.policyVersion;
+        if (auditCtx.ruleIds !== undefined) entry.ruleIds = auditCtx.ruleIds;
+      } else {
+        entry.code = response.code;
+        if (response.policyVersion !== undefined) entry.policyVersion = response.policyVersion;
+      }
+      audit.append(entry);
+    } catch {
+      /* auditing must never fail a decision */
+    }
+  }
+
+  /**
+   * The decision pipeline (§13). NEVER throws: every failure maps to a denied
+   * response. Populates `auditCtx` as the decision unfolds.
+   */
+  private async runDecision(line: string, auditCtx: AuditContext): Promise<SignResponseJson> {
     let request: SignRequestJson;
     try {
       request = parseSignRequest(line);
@@ -312,6 +359,7 @@ export class SignBoxDaemon {
         safeReason: "request does not match the expected schema",
       };
     }
+    auditCtx.agent = request.agent;
 
     const deny = (code: DenyCode, safeReason: string, policyVersion?: number): SignResponseJson =>
       policyVersion === undefined
@@ -386,6 +434,8 @@ export class SignBoxDaemon {
       } catch {
         return deny("SCHEMA_INVALID", "transaction could not be fully decoded");
       }
+      // Contract::action names only — never the data values (§16).
+      auditCtx.contracts = decoded.actions.map((a) => `${a.contract}::${a.action}`);
 
       // Deterministic policy evaluation.
       const { decision, quotaDemands } = evaluatePolicy(decoded, activePolicy, {
@@ -398,6 +448,7 @@ export class SignBoxDaemon {
       if (decision.effect === "deny") {
         return deny(decision.code, decision.safeReason, decision.policyVersion);
       }
+      auditCtx.ruleIds = decision.ruleIds;
 
       // Stateful limits: reserve atomically BEFORE signing (§13, §15.6).
       // Without a journal, any demand refuses — fail closed (§8.5).
