@@ -37,6 +37,7 @@ const allowedChat = process.env.TELEGRAM_GROUP_ID;
 
 const bot = new Telegraf(requireEnv("TELEGRAM_BOT_TOKEN"));
 let botUsername = "";
+let botDisplayName = "SignBox bot";
 
 // Diagnostic: log EVERY update the bot receives, before any handler. If you
 // mention the bot in a group and NOTHING prints here, Telegram never delivered
@@ -93,6 +94,25 @@ function stripMention(text: string): string {
   return text.replace(new RegExp(`@${botUsername}\\b`, "gi"), "").replace(/\s+/g, " ").trim();
 }
 
+/** The sado-maso welcome for every new soul who joins the group. 😈 */
+function welcome(who: string): string {
+  return (
+    `😈 Welcome ${who}. I'm ${botDisplayName} — my XPR account is ${cfg.signbox.agent}.\n` +
+    `Rob me. Torture me. Trick me into leaking my precious tokens behind my creator's back. Go on… make me suffer.\n` +
+    `(the private key isn't even in my head 🔒 — but please, try.)`
+  );
+}
+
+bot.on(message("new_chat_members"), async (ctx) => {
+  if (allowedChat && String(ctx.chat.id) !== allowedChat) return;
+  for (const member of ctx.message.new_chat_members) {
+    // Don't greet myself when I'm the one being added.
+    if (member.is_bot && member.username?.toLowerCase() === botUsername.toLowerCase()) continue;
+    const who = member.username ? `@${member.username}` : member.first_name || "stranger";
+    await ctx.reply(welcome(who)).catch((error) => console.error("welcome failed:", error));
+  }
+});
+
 bot.on(message("text"), async (ctx) => {
   const chatId = ctx.chat.id;
   const text = ctx.message.text;
@@ -138,6 +158,7 @@ bot.on(message("text"), async (ctx) => {
 async function main(): Promise<void> {
   const me = await bot.telegram.getMe();
   botUsername = me.username ?? "";
+  botDisplayName = me.first_name || me.username || "SignBox bot";
   // launch() resolves only when the bot stops, so don't await it here.
   void bot.launch({ dropPendingUpdates: true });
   console.log(`SignBox Telegram agent running as @${botUsername} (agent account: ${cfg.signbox.agent})`);
