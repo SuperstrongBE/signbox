@@ -20,6 +20,11 @@ import { JsonRpc } from "@proton/js";
 import { decodeXprTransaction } from "../chains/xpr/decode.js";
 import { XPR_CHAIN, XPR_NETWORKS } from "../chains/xpr/networks.js";
 import { generateK1KeyPair } from "../chains/xpr/keygen.js";
+import { runOnboarding, type BuiltRequest } from "../onboarding/flow.js";
+import { XprOnboardingBackend } from "../onboarding/xprBackend.js";
+import { generatePermissionName } from "../onboarding/permission.js";
+import { promoteKeystoreFile, destroyKeystoreFile } from "../keystore/encryptedFile.js";
+import qrcodeTerminal from "qrcode-terminal";
 import { pinChainId } from "../chains/xpr/adapter.js";
 import { createKeystoreFile } from "../keystore/encryptedFile.js";
 import { validatePolicy } from "../core/policy/schema.js";
@@ -336,6 +341,98 @@ daemonCommand
 // ----------------------------------------------------------------- agent
 
 const agentCommand = program.command("agent").description("agent administration (§11.2)");
+
+agentCommand
+  .command("create")
+  .description("onboard an agent: generate its key, build an ESR for the authority to sign (§10)")
+  .requiredOption("--agent <name>", "agent account name")
+  .requiredOption("--authority <name>", "superior authority account")
+  .requiredOption("--signbox-contract <name>", "SignBox contract account")
+  .requiredOption("--out <path>", "keystore file to create")
+  .option("--network <network>", "XPR network", "testnet")
+  .option("--mode <mode>", "create a new agent account or onboard an existing one", "create")
+  .option("--permission <name>", "dedicated permission name (generated if omitted)")
+  .option("--ram-bytes <n>", "RAM to buy for a new account (paid by the authority)", "4096")
+  .option("--scheme <scheme>", "ESR scheme: esr or proton", "esr")
+  .action(
+    async (options: {
+      agent: string;
+      authority: string;
+      signboxContract: string;
+      out: string;
+      network: string;
+      mode: string;
+      permission?: string;
+      ramBytes: string;
+      scheme: string;
+    }) => {
+      if (options.mode !== "create" && options.mode !== "existing") {
+        fail(`--mode must be "create" or "existing"`);
+      }
+      const context = contextFor(options.network);
+      const descriptor = XPR_NETWORKS[options.network];
+      const permission = options.permission ?? generatePermissionName();
+      const backend = new XprOnboardingBackend({
+        endpoints: descriptor?.endpoints ?? [],
+        chainId: context.chainId,
+        signboxContract: options.signboxContract,
+        scheme: options.scheme === "proton" ? "proton" : "esr",
+      });
+
+      try {
+        const result = await runOnboarding(
+          {
+            chain: context,
+            authority: options.authority,
+            agent: options.agent,
+            permission,
+            mode: options.mode,
+            exportPolicy: "non-exportable",
+            keystorePath: expandPath(options.out),
+            ...(options.mode === "create" ? { ramBytes: Number(options.ramBytes) } : {}),
+          },
+          {
+            backend,
+            generateKey: generateK1KeyPair,
+            getPassphrase: async () => {
+              const p = await promptPassphrase("keystore passphrase: ");
+              const c = await promptPassphrase("confirm passphrase: ");
+              if (Buffer.compare(p, c) !== 0) {
+                p.fill(0);
+                c.fill(0);
+                fail("passphrases do not match");
+              }
+              c.fill(0);
+              return p;
+            },
+            keystore: {
+              createTemp: createKeystoreFile,
+              promote: promoteKeystoreFile,
+              destroy: destroyKeystoreFile,
+            },
+            present: presentEsr,
+            now: Date.now,
+          },
+        );
+        print({ status: "onboarded", ...result, next: `signbox policy edit ${result.agent}` });
+      } catch (error) {
+        fail((error as Error).message);
+      }
+    },
+  );
+
+/** Render the ESR as a terminal QR code plus a human-readable action summary. */
+function presentEsr(request: BuiltRequest): void {
+  process.stderr.write("\nScan this request with the authority's wallet:\n\n");
+  qrcodeTerminal.generate(request.esrUri, { small: true }, (qr: string) => {
+    process.stderr.write(qr + "\n");
+  });
+  process.stderr.write(`URI: ${request.esrUri}\n\nActions the authority will sign:\n`);
+  for (const a of request.summary) {
+    process.stderr.write(`  - ${a.detail}\n`);
+  }
+  process.stderr.write("\nWaiting for on-chain confirmation (2 min)...\n");
+}
 
 for (const verb of ["disable", "enable"] as const) {
   agentCommand
