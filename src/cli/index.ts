@@ -36,6 +36,7 @@ import { promptPassphrase } from "./passphrase.js";
 import { isInteractive, promptText, promptChoice, validateAccountName } from "./prompt.js";
 import { adminCommand, readToken, signViaDaemon } from "./client.js";
 import { startDaemonFromConfig, discoverKeystores } from "./daemonRunner.js";
+import { AuditLog } from "../daemon/auditLog.js";
 import type { ChainContext } from "../core/types.js";
 
 const require = createRequire(import.meta.url);
@@ -539,6 +540,74 @@ for (const verb of ["disable", "enable"] as const) {
         fail((error as Error).message);
       }
     });
+}
+
+// ----------------------------------------------------------------- audit
+
+const auditCommand = program.command("audit").description("audit trail (§16)");
+
+/** Parse a "--since" like "24h", "30m", "7d" into a start timestamp (ms). */
+function sinceToMs(since: string | undefined): number {
+  if (since === undefined) return 0;
+  const match = /^(\d+)([smhd])$/.exec(since.trim());
+  if (match === null) fail(`invalid --since: ${since} (use e.g. 30m, 24h, 7d)`);
+  const n = Number(match[1]);
+  const unit = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2]!]!;
+  return Date.now() - n * unit;
+}
+
+auditCommand
+  .command("tail")
+  .description("show the most recent audit entries")
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .option("-n, --limit <n>", "number of entries", "20")
+  .action((options: { config: string; limit: string }) => {
+    withAudit(options.config, (audit) => print(audit.tail(Number(options.limit))));
+  });
+
+auditCommand
+  .command("query")
+  .description("query the audit trail")
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .option("--agent <name>", "filter by agent")
+  .option("--since <window>", "e.g. 30m, 24h, 7d")
+  .option("--limit <n>", "max entries", "100")
+  .action((options: { config: string; agent?: string; since?: string; limit: string }) => {
+    withAudit(options.config, (audit) =>
+      print(
+        audit.query({
+          ...(options.agent !== undefined ? { agent: options.agent } : {}),
+          sinceMs: sinceToMs(options.since),
+          limit: Number(options.limit),
+        }),
+      ),
+    );
+  });
+
+auditCommand
+  .command("verify")
+  .description("verify the audit hash chain is intact (tamper detection)")
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .action((options: { config: string }) => {
+    withAudit(options.config, (audit) => {
+      const result = audit.verify();
+      print(result);
+      if (!result.ok) process.exit(1);
+    });
+  });
+
+function withAudit(configPath: string, fn: (audit: AuditLog) => void): void {
+  try {
+    const config = loadConfig(configPath);
+    const audit = new AuditLog(config.stateDbPath);
+    try {
+      fn(audit);
+    } finally {
+      audit.close();
+    }
+  } catch (error) {
+    fail((error as Error).message);
+  }
 }
 
 program.parseAsync(process.argv).catch((error: unknown) => {
