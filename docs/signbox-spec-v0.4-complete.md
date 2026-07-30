@@ -15,6 +15,7 @@
 > - **On-chain contract.** `createpolicy` requires the initial version to be 1; `setpolicy` requires a strictly increasing version (the on-chain source of the daemon's anti-rollback); `sha256(policyjson) == policyhash` is verified on-chain, made possible by requiring the stored JSON to already be canonical JCS bytes (§8.6); the authority pays the row's RAM; `setauthority` requires the current AND new authority to co-sign. The contract never parses the policy JSON — the daemon is the sole validator (§7.5).
 > - **Onboarding (§10).** Two modes: create a new agent account, or onboard an existing one. The agent's `owner`/`active` are controlled by the authority via an account permission (no authority key needed); the SignBox key lives on a dedicated permission, child of `active`; `linkauth` is out of scope (the developer links it per policy). Session timeout = 2 minutes (the XPR wallet window). The `agent create` CLI is interactive, prompting for chain (XPR only), network, authority, agent, mode and key export policy; flags remain for scripted use.
 > - **Policy cache freshness.** 30 s background refresh; financial policies re-confirmed within 10 s; strict fail-closed (§14.3–14.4). Anti-rollback watermark persisted across restarts (§14.5).
+> - **Multi-action limit hardening (§8.7).** `maxPerTransaction` now aggregates the SUM of a rule's matching actions in the transaction (not per action); new top-level `maxActionsPerTransaction` (default 1) refuses multi-action transactions unless the policy opts in; new count-based rate limits `maxCountPerHour` / `maxCountPerDay` / `maxCountPerRecipientPerHour`, counting each action.
 > - Open questions #2, #3, #4, #5 and #10 are resolved accordingly (§19).
 
 ---
@@ -644,6 +645,7 @@ The contract does not guarantee:
 {
   "schemaVersion": 1,
   "default": "deny",
+  "maxActionsPerTransaction": 1,
   "chain": {
     "name": "XPR",
     "chainId": "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd"
@@ -666,7 +668,9 @@ The contract does not guarantee:
         "maxPerTransaction": "1000.0000 XPR",
         "maxPerHour": "2500.0000 XPR",
         "maxPerDay": "5000.0000 XPR",
-        "cooldownPerRecipientMs": 60000
+        "cooldownPerRecipientMs": 60000,
+        "maxCountPerHour": 20,
+        "maxCountPerRecipientPerHour": 3
       }
     },
     {
@@ -767,6 +771,26 @@ Any cap that must be absolutely guaranteed must be enforced on-chain (contract, 
 - **amounts: never floating point.** Any asset amount is handled as an integer of minimal units together with the symbol and its precision (`10000` + `XPR@4`, never `1.0` as a JavaScript `number`);
 - **symbols: strict comparison on the (contract, symbol, precision) triplet** — the symbol alone is not enough (homographs, fake tokens);
 - any canonicalization divergence between the daemon and the publishing tool produces a hash mismatch, hence a refusal (fail closed), never a tolerance.
+
+### 8.7 Transaction and rate limits
+
+**`maxActionsPerTransaction`** is a top-level policy field. It bounds the number of actions in a single transaction and **defaults to 1** when omitted: a multi-action transaction is refused (`TOO_MANY_ACTIONS`) unless the policy explicitly opts into more. A multi-action transaction is the vector that both multiplies value limits and smuggles a confused-deputy action (§15.5), so single-action is the safe default. (The XPR adapter additionally hard-caps a transaction at 16 actions during decoding.)
+
+Per-rule `limits` fields:
+
+| Field | Kind | Meaning |
+|---|---|---|
+| `maxPerTransaction` | asset | Maximum **total value** moved by this rule's matching actions **in one transaction** — the SUM across actions, not per action. N actions each at the cap cannot move N × the cap. |
+| `maxPerHour` / `maxPerDay` | asset | Maximum total value over a sliding window (agent + rule). |
+| `cooldownPerRecipientMs` | integer ms | Minimum delay between two matching actions to the same recipient. |
+| `maxCountPerHour` / `maxCountPerDay` | integer | Maximum **number** of matching actions over a sliding window (agent + rule). |
+| `maxCountPerRecipientPerHour` | integer | Maximum number of matching actions to the same recipient per hour. |
+
+Semantics that matter for correctness:
+
+- **Aggregation.** Value and count limits aggregate across the actions of a transaction. `maxPerTransaction` sums by symbol; an action whose symbol/precision does not match a rule's value cap is refused as ambiguous rather than slipping through uncapped.
+- **Per-action counting.** Count and cooldown limits count **each matching action**, so a single multi-action transaction counts every action toward the window — batching cannot bypass a count limit.
+- **Atomic and best-effort.** All stateful limits are reserved atomically before signing and are a local best-effort guarantee (§8.5); any absolute cap must live on-chain.
 
 ---
 

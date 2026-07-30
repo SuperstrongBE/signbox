@@ -103,6 +103,7 @@ The superior authority pays the account's RAM. `linkauth` (the chain-enforced co
 {
   "schemaVersion": 1,
   "default": "deny",
+  "maxActionsPerTransaction": 1,
   "chain": { "name": "XPR", "chainId": "71ee83bc…" },
   "rules": [
     {
@@ -118,14 +119,15 @@ The superior authority pays the account's RAM. `linkauth` (the chain-enforced co
       },
       "limits": {
         "maxPerTransaction": "1000.0000 XPR",
-        "maxPerDay": "5000.0000 XPR"
+        "maxPerDay": "5000.0000 XPR",
+        "maxCountPerRecipientPerHour": 3
       }
     }
   ]
 }
 ```
 
-Declarative, versioned, JSON-Schema-validated, no executable code. An explicit `deny` always beats an `allow`; anything not explicitly allowed is refused.
+Declarative, versioned, JSON-Schema-validated, no executable code. An explicit `deny` always beats an `allow`; anything not explicitly allowed is refused. Value and count limits aggregate across a transaction's actions, and `maxActionsPerTransaction` defaults to **1** — so a multi-action transaction can neither multiply a limit nor slip in an extra action unless the policy explicitly allows it.
 
 ## Where policies live, and configuration
 
