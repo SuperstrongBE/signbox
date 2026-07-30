@@ -11,11 +11,18 @@
   "engines": {
     "node": ">=22"
   },
+  "files": [
+    "dist",
+    "llms.txt",
+    "llms-full.txt",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

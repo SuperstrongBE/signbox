@@ -172,9 +172,29 @@ Later phases:
 | 3 — High assurance | HSM/TPM/PKCS#11 backends, attestation, administrative multisig | planned |
 | 4 — More chains | Additional `ChainAdapter` implementations (the core is chain-agnostic from day one) | planned |
 
-## Development
+## Install the CLI
 
 Requirements: Node.js ≥ 22.
+
+Build and install from source (puts `signbox` and `signbox-mcp` on your PATH):
+
+```bash
+npm ci
+npm run build
+npm link            # or: npm install -g .
+signbox --version
+```
+
+Or install a released tarball (see [Releases](../../releases)):
+
+```bash
+npm install -g signbox-0.1.0.tgz
+```
+
+Every `vX.Y.Z` git tag triggers the release workflow, which builds, tests, and
+attaches `signbox-X.Y.Z.tgz` to the GitHub Release.
+
+## Development
 
 ```bash
 npm install
