@@ -32,6 +32,15 @@ export class AmbiguousValueError extends SignBoxError {
   override readonly name = "AmbiguousValueError";
 }
 
+/**
+ * A deterministic async provider (INV-008-A) could not be resolved or its
+ * evidence is missing/invalid. Always a refusal (fail closed) — a rule that
+ * depends on unavailable external state must never silently pass.
+ */
+export class ProviderUnavailableError extends SignBoxError {
+  override readonly name = "ProviderUnavailableError";
+}
+
 /** Keystore failure. The message never includes passphrases or key bytes. */
 export class KeystoreError extends SignBoxError {
   override readonly name = "KeystoreError";

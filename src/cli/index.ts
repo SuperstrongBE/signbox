@@ -34,8 +34,10 @@ import { pinChainId } from "../chains/xpr/adapter.js";
 import { createKeystoreFile } from "../keystore/encryptedFile.js";
 import { validatePolicy } from "../core/policy/schema.js";
 import { verifyStoredPolicy } from "../core/policy/onchain.js";
-import { evaluatePolicy } from "../core/policy/engine.js";
+import { evaluatePolicy, collectProviderQueries } from "../core/policy/engine.js";
+import { resolveProviders } from "../daemon/providerResolver.js";
 import { ChainPolicyReader } from "../daemon/chainPolicyReader.js";
+import { XprChainReadRelay } from "../daemon/chainRelay.js";
 import { SignBoxError } from "../core/errors.js";
 import { DEFAULT_CONFIG_PATH, expandPath, loadConfig, chainContextOf } from "./config.js";
 import { promptPassphrase } from "./passphrase.js";
@@ -270,12 +272,27 @@ tx.command("explain")
         }
 
         const decoded = decodeXprTransaction(readJsonFile(options.transaction), context);
-        const result = evaluatePolicy(decoded, policy, {
+        const baseCtx = {
           agent: options.agent,
           agentPermission,
           chainId: context.chainId,
           policyVersion,
-        });
+        };
+        // Resolve any providers (§8.4) the same way the daemon does, so the
+        // dry-run matches: read them through the same read-only relay.
+        const queries = collectProviderQueries(decoded, policy, baseCtx);
+        const evidence =
+          queries.length > 0
+            ? await resolveProviders(
+                queries,
+                new XprChainReadRelay({ endpoints: config.endpoints, chainId: config.chainId }),
+              )
+            : undefined;
+        const result = evaluatePolicy(
+          decoded,
+          policy,
+          evidence !== undefined ? { ...baseCtx, evidence } : baseCtx,
+        );
         print({
           agent: options.agent,
           source,
@@ -283,6 +300,7 @@ tx.command("explain")
           version: policyVersion,
           permission: agentPermission,
           ...meta,
+          providers: queries.length,
           decision: result.decision,
           statefulLimits: result.quotaDemands.length,
         });

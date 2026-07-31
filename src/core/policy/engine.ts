@@ -16,8 +16,9 @@
  */
 
 import type { DecodedAction, DecodedTransaction, Decision, DenyCode } from "../types.js";
-import type { MatchValue, Policy, PolicyRule } from "./schema.js";
-import { AmbiguousValueError, AssetError } from "../errors.js";
+import type { MatchValue, Policy, PolicyRule, TableRowProvider } from "./schema.js";
+import { AmbiguousValueError, AssetError, ProviderUnavailableError } from "../errors.js";
+import { canonicalize } from "../canonical/jcs.js";
 import {
   compareBareAmounts,
   parseAsset,
@@ -25,11 +26,32 @@ import {
   type AssetAmount,
 } from "../asset.js";
 
+/** Resolved arguments of a table-row provider query. */
+export interface ProviderQuery {
+  key: string;
+  provider: "xpr.rpc.tableRow";
+  args: { contract: string; scope: string; table: string; key: string };
+}
+
+/** Evidence for one resolved provider query, injected by the daemon (§8.4). */
+export type ProviderEvidence =
+  | { ok: true; found: boolean; row: Record<string, unknown> | null }
+  | { ok: false };
+
+/** Evidence keyed by canonical(provider + resolved args). */
+export type ProviderEvidenceMap = Record<string, ProviderEvidence>;
+
 export interface EvaluationContext {
   agent: string;
   agentPermission: string;
   chainId: string;
   policyVersion: number;
+  /**
+   * Resolved provider evidence (§8.4). The daemon resolves the queries listed
+   * by collectProviderQueries() and passes them here. A rule whose provider has
+   * no evidence — or unresolvable evidence — fails closed (PROVIDER_UNAVAILABLE).
+   */
+  evidence?: ProviderEvidenceMap;
 }
 
 /**
@@ -136,9 +158,106 @@ function predicateHolds(actual: unknown, expected: MatchValue, ctx: EvaluationCo
   throw new AmbiguousValueError("unknown match operator");
 }
 
-function ruleMatches(action: DecodedAction, rule: PolicyRule, ctx: EvaluationContext): boolean {
+/** The static part of a rule: its `match` field predicates only (no providers). */
+function staticMatch(action: DecodedAction, rule: PolicyRule, ctx: EvaluationContext): boolean {
   for (const [path, expected] of Object.entries(rule.match)) {
     if (!predicateHolds(resolvePath(action, path), expected, ctx)) return false;
+  }
+  return true;
+}
+
+/**
+ * Substitute a provider arg/value. Literals pass through; a `$`-variable is
+ * resolved against the action ($agent, $agentPermission, or a match path like
+ * $data.to). Anything that does not resolve to a string is an ambiguity.
+ */
+function substituteArg(value: string, action: DecodedAction, ctx: EvaluationContext): string {
+  if (!value.startsWith("$")) return value;
+  if (value === "$agent") return ctx.agent;
+  if (value === "$agentPermission") return ctx.agentPermission;
+  const resolved = resolvePath(action, value.slice(1));
+  if (typeof resolved !== "string") {
+    throw new AmbiguousValueError(`provider variable "${value}" did not resolve to a string`);
+  }
+  return resolved;
+}
+
+/** Fully resolve a table-row provider's args against the action (scope defaults to contract). */
+function resolveTableRowArgs(
+  req: TableRowProvider,
+  action: DecodedAction,
+  ctx: EvaluationContext,
+): ProviderQuery["args"] {
+  return {
+    contract: substituteArg(req.args.contract, action, ctx),
+    scope: substituteArg(req.args.scope ?? req.args.contract, action, ctx),
+    table: substituteArg(req.args.table, action, ctx),
+    key: substituteArg(req.args.key, action, ctx),
+  };
+}
+
+/** Canonical evidence key so the daemon resolver and the engine agree exactly. */
+function evidenceKey(provider: string, args: ProviderQuery["args"]): string {
+  return canonicalize({ provider, args });
+}
+
+/**
+ * The queries the daemon must resolve before evaluation: one per distinct
+ * (provider, resolved args) referenced by a rule whose STATIC match already
+ * passes for an action. Pure — args are built by substitution, nothing fetched.
+ */
+export function collectProviderQueries(
+  tx: DecodedTransaction,
+  policy: Policy,
+  ctx: EvaluationContext,
+): ProviderQuery[] {
+  const out = new Map<string, ProviderQuery>();
+  for (const action of tx.actions) {
+    for (const rule of policy.rules) {
+      if (rule.providers === undefined || rule.providers.length === 0) continue;
+      if (!staticMatch(action, rule, ctx)) continue;
+      for (const req of rule.providers) {
+        try {
+          const args = resolveTableRowArgs(req, action, ctx);
+          const key = evidenceKey(req.provider, args);
+          if (!out.has(key)) out.set(key, { key, provider: req.provider, args });
+        } catch {
+          // An arg that cannot be resolved will make the engine refuse when it
+          // evaluates this rule; nothing to fetch here.
+        }
+      }
+    }
+  }
+  return [...out.values()];
+}
+
+/** Does a single provider requirement hold against the injected evidence? */
+function providerHolds(req: TableRowProvider, action: DecodedAction, ctx: EvaluationContext): boolean {
+  const args = resolveTableRowArgs(req, action, ctx);
+  const evidence = ctx.evidence?.[evidenceKey(req.provider, args)];
+  if (evidence === undefined || evidence.ok !== true) {
+    // Missing or unresolvable evidence — never silently pass (fail closed).
+    throw new ProviderUnavailableError(`provider "${req.provider}" evidence is unavailable`);
+  }
+  if (!evidence.found || evidence.row === null) return false; // row absent → condition false
+  const field = evidence.row[req.select];
+  const target = substituteArg(req.value, action, ctx);
+  if (req.op === "contains") {
+    if (!Array.isArray(field)) {
+      throw new AmbiguousValueError(`provider field "${req.select}" is not an array for "contains"`);
+    }
+    return field.map((x) => String(x)).includes(target);
+  }
+  // op === "eq"
+  return field !== undefined && field !== null && String(field) === target;
+}
+
+function ruleMatches(action: DecodedAction, rule: PolicyRule, ctx: EvaluationContext): boolean {
+  if (!staticMatch(action, rule, ctx)) return false;
+  if (rule.providers !== undefined) {
+    for (const req of rule.providers) {
+      if (!providerHolds(req, action, ctx)) return false;
+    }
   }
   return true;
 }
@@ -292,6 +411,9 @@ export function evaluatePolicy(
     return { decision: { effect: "allow", ruleIds, policyVersion: v }, quotaDemands };
   } catch (error) {
     // INV-010: any evaluation ambiguity or internal failure is a refusal.
+    if (error instanceof ProviderUnavailableError) {
+      return refuse("PROVIDER_UNAVAILABLE", "a policy provider could not be resolved");
+    }
     if (error instanceof AmbiguousValueError || error instanceof AssetError) {
       return refuse("AMBIGUOUS_VALUE", "transaction contains a value the policy cannot compare safely");
     }

@@ -745,6 +745,35 @@ Recommended V1 providers:
 
 A generic HTTP provider is more dangerous than a typed RPC provider. It must require: allowlisted URL, fixed method, response schema, size limit, no redirects and valid TLS.
 
+#### Implemented — `xpr.rpc.tableRow` (v0.4)
+
+The first typed provider is shipped and scoped. A rule may carry a `providers` array; each requirement reads one row and asserts a condition on a field of it. It only NARROWS a rule (extra AND condition), never widens rights (INV-008-A).
+
+```json
+{
+  "id": "allow-whitelisted-recipients",
+  "effect": "allow",
+  "match": { "contract": "eosio.token", "action": "transfer", "data.from": "$agent" },
+  "providers": [
+    {
+      "provider": "xpr.rpc.tableRow",
+      "args": { "contract": "whitelister", "scope": "whitelister", "table": "lists", "key": "$agent" },
+      "select": "allowed",
+      "op": "contains",
+      "value": "$data.to"
+    }
+  ]
+}
+```
+
+→ *allow the transfer only if the on-chain row `lists[$agent]` of contract `whitelister` has an `allowed` array that contains the recipient `$data.to`.*
+
+- `args.*` and `value` are literals or `$`-variables ($agent, $agentPermission, or a transaction path like `$data.to`) resolved against the action; `scope` defaults to `contract`.
+- operators: **`contains`** (array field holds the value) and **`eq`** (scalar field equals the value).
+- **Execution model (keeps the engine pure).** The engine lists the queries it needs (`collectProviderQueries`, a pure pass over statically-matching rules); the daemon resolves them through the read-only relay (`get_table_rows`) with a strict timeout, normalizes the row into *evidence*, and injects it back; the engine then evaluates deterministically. The evidence key is `canonical(provider + resolved args)`, so resolver and engine agree exactly.
+- **Fail closed.** An unreachable relay, a timeout, or a malformed response ⇒ evidence `{ ok: false }` ⇒ **`PROVIDER_UNAVAILABLE`** refusal. A *successful* query that finds no row is a deterministic "not found" (condition false), distinct from "could not resolve".
+- **Caveats.** TOCTOU (the row may change before the tx lands — for an absolute invariant, enforce on-chain per INV-006) and RPC trust (chain id is pinned; read against irreversible state for high-value gating). `notContains`/`neq` and multi-level `select` are deferred.
+
 ### 8.5 Required state
 
 Some rules are stateful:

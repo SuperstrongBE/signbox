@@ -32,7 +32,8 @@ import type {
   TransactionSigner,
 } from "../core/types.js";
 import type { Policy } from "../core/policy/schema.js";
-import { evaluatePolicy } from "../core/policy/engine.js";
+import { evaluatePolicy, collectProviderQueries } from "../core/policy/engine.js";
+import { resolveProviders } from "./providerResolver.js";
 import { ValidationError } from "../core/errors.js";
 import {
   parseSignRequest,
@@ -533,13 +534,25 @@ export class SignBoxDaemon {
       // Contract::action names only — never the data values (§16).
       auditCtx.contracts = decoded.actions.map((a) => `${a.contract}::${a.action}`);
 
-      // Deterministic policy evaluation.
-      const { decision, quotaDemands } = evaluatePolicy(decoded, activePolicy, {
+      // Resolve any deterministic async providers (§8.4) BEFORE evaluation, so
+      // the engine stays pure: list the queries, read them through the relay
+      // (fail closed), and inject the evidence. No providers → no I/O.
+      const baseCtx = {
         agent: runtime.agent,
         agentPermission: runtime.permission,
         chainId: chain.chainId,
         policyVersion: activeVersion,
-      });
+      };
+      const queries = collectProviderQueries(decoded, activePolicy, baseCtx);
+      const evidence =
+        queries.length > 0 ? await resolveProviders(queries, this.deps.relay) : undefined;
+
+      // Deterministic policy evaluation.
+      const { decision, quotaDemands } = evaluatePolicy(
+        decoded,
+        activePolicy,
+        evidence !== undefined ? { ...baseCtx, evidence } : baseCtx,
+      );
 
       if (decision.effect === "deny") {
         return deny(decision.code, decision.safeReason, decision.policyVersion);
