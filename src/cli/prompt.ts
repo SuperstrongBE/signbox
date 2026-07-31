@@ -5,6 +5,7 @@
  */
 
 import { createInterface } from "node:readline/promises";
+import { ValidationError } from "../core/errors.js";
 
 export function isInteractive(): boolean {
   return process.stdin.isTTY === true && process.stderr.isTTY === true;
@@ -67,6 +68,65 @@ export async function promptChoice<T extends string>(
   } finally {
     rl.close();
   }
+}
+
+/**
+ * Arrow-key radio select. Renders the choices with a `❯` marker on the
+ * highlighted row; Up/Down (or j/k, or a number key) move, Enter confirms,
+ * Ctrl-C aborts. Writes to stderr so stdout stays reserved for the result.
+ * Only call this on a real TTY (guard with isInteractive()).
+ */
+export async function promptSelect<T extends string>(
+  question: string,
+  choices: Choice<T>[],
+  opts: { default?: T } = {},
+): Promise<T> {
+  const stdin = process.stdin;
+  const out = process.stderr;
+  let index = choices.findIndex((c) => c.value === opts.default);
+  if (index < 0) index = 0;
+
+  out.write(`${question}\n`);
+  const render = (first: boolean): void => {
+    if (!first) out.write(`\x1b[${choices.length}A`);
+    for (const [i, c] of choices.entries()) {
+      const on = i === index;
+      out.write(`\x1b[2K\r  ${on ? "\x1b[1m❯ " : "  "}${c.label}\x1b[0m\n`);
+    }
+  };
+  render(true);
+
+  return new Promise<T>((resolve, reject) => {
+    stdin.setRawMode?.(true);
+    stdin.resume();
+    out.write("\x1b[?25l"); // hide cursor
+    const cleanup = (): void => {
+      stdin.removeListener("data", onData);
+      stdin.setRawMode?.(false);
+      stdin.pause();
+      out.write("\x1b[?25h"); // show cursor
+    };
+    const onData = (buf: Buffer): void => {
+      const s = buf.toString();
+      if (s === "\x03") {
+        cleanup();
+        reject(new ValidationError("selection aborted"));
+      } else if (s === "\r" || s === "\n") {
+        cleanup();
+        resolve(choices[index]!.value);
+      } else if (s === "\x1b[A" || s === "\x1bOA" || s === "k") {
+        index = (index - 1 + choices.length) % choices.length;
+        render(false);
+      } else if (s === "\x1b[B" || s === "\x1bOB" || s === "j") {
+        index = (index + 1) % choices.length;
+        render(false);
+      } else if (/^[1-9]$/.test(s) && Number(s) <= choices.length) {
+        index = Number(s) - 1;
+        render(false);
+      }
+    };
+    stdin.on("data", onData);
+  });
 }
 
 /** Antelope account name validator, for interactive text prompts. */

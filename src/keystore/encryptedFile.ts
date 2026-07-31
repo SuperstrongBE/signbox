@@ -15,7 +15,8 @@
  */
 
 import sodium from "sodium-native";
-import { readFileSync, writeFileSync, statSync, linkSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, statSync, linkSync, unlinkSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { KeystoreError } from "../core/errors.js";
 import { canonicalize } from "../core/canonical/jcs.js";
 import type { ChainContext, ExportPolicy } from "../core/types.js";
@@ -118,6 +119,9 @@ export function createKeystoreFile(
     );
     const file: KeystoreFileV1 = { ...header, ciphertext: ciphertext.toString("base64") };
     try {
+      // Ensure the keystore directory exists (zero-config first run creates
+      // ~/.signbox/keystores/ on demand).
+      mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, JSON.stringify(file, null, 2) + "\n", {
         mode: 0o600,
         flag: "wx",

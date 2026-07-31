@@ -33,7 +33,7 @@ import { evaluatePolicy } from "../core/policy/engine.js";
 import { SignBoxError } from "../core/errors.js";
 import { DEFAULT_CONFIG_PATH, expandPath, loadConfig, chainContextOf } from "./config.js";
 import { promptPassphrase } from "./passphrase.js";
-import { isInteractive, promptText, promptChoice, validateAccountName } from "./prompt.js";
+import { isInteractive, promptText, promptSelect, validateAccountName } from "./prompt.js";
 import { adminCommand, readToken, signViaDaemon } from "./client.js";
 import { startDaemonFromConfig, discoverKeystores } from "./daemonRunner.js";
 import { AuditLog } from "../daemon/auditLog.js";
@@ -357,7 +357,7 @@ agentCommand
   .option("--export <policy>", "key export policy: non-exportable | encrypted-backup-only")
   .option("--permission <name>", "dedicated permission name (generated if omitted)")
   .option("--ram-bytes <n>", "RAM to buy for a new account (paid by the authority)")
-  .option("--scheme <scheme>", "ESR scheme: esr or proton")
+  .option("--scheme <scheme>", "signing-request scheme: proton | proton-dev | esr (default from network)")
   .action(
     async (options: {
       agent?: string;
@@ -391,7 +391,7 @@ agentCommand
 
       const chain = await def(
         options.chain,
-        () => promptChoice("Chain:", [{ value: "XPR", label: "XPR Network" }], { default: "XPR" }),
+        () => promptSelect("Chain:", [{ value: "XPR", label: "XPR Network" }], { default: "XPR" }),
         "XPR",
       );
       if (chain !== "XPR") fail("only the XPR chain is supported for now");
@@ -399,7 +399,7 @@ agentCommand
       const network = await def(
         options.network,
         () =>
-          promptChoice(
+          promptSelect(
             "Network:",
             Object.keys(XPR_NETWORKS).map((n) => ({ value: n, label: n })),
             { default: "testnet" },
@@ -418,7 +418,7 @@ agentCommand
       const mode = await def(
         options.mode,
         () =>
-          promptChoice(
+          promptSelect(
             "Mode:",
             [
               { value: "create", label: "create a new agent account" },
@@ -433,7 +433,7 @@ agentCommand
       const exportPolicy = await def(
         options.export,
         () =>
-          promptChoice(
+          promptSelect(
             "Key export policy:",
             [
               { value: "non-exportable", label: "non-exportable (recommended)" },
@@ -447,18 +447,26 @@ agentCommand
         fail(`--export must be "non-exportable" or "encrypted-backup-only"`);
       }
 
-      const signboxContract = await def(
-        options.signboxContract,
-        () => promptText("SignBox contract account", { default: "signbox" }),
-        "signbox",
-      );
+      // The SignBox contract account is deployment config, never asked at
+      // onboarding: default "signbox", overridable only by the flag.
+      const signboxContract = options.signboxContract ?? "signbox";
       const out = await def(
         options.out,
         () =>
           promptText("Keystore file", { default: `~/.signbox/keystores/${agent}.keystore.json` }),
         `~/.signbox/keystores/${agent}.keystore.json`,
       );
-      const scheme = options.scheme === "proton" ? "proton" : "esr";
+      // The XPR WebAuth wallet needs the `proton` (mainnet) / `proton-dev`
+      // (testnet) scheme; default from the network, overridable via --scheme.
+      const schemes = ["esr", "proton", "proton-dev"] as const;
+      type Scheme = (typeof schemes)[number];
+      let scheme: Scheme = network === "mainnet" ? "proton" : "proton-dev";
+      if (options.scheme !== undefined) {
+        if (!schemes.includes(options.scheme as Scheme)) {
+          fail(`--scheme must be one of: ${schemes.join(", ")}`);
+        }
+        scheme = options.scheme as Scheme;
+      }
       const permission = options.permission ?? generatePermissionName();
 
       const backend = new XprOnboardingBackend({
