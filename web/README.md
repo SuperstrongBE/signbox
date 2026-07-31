@@ -33,6 +33,28 @@ Point at a different host with `signbox agent create --companion-url https://…
 npm run build      # -> web/dist, deployable to any static host
 ```
 
+## Docker
+
+A multi-stage `Dockerfile` builds the SPA and serves it with nginx (SPA
+fallback, gzip, immutable caching for hashed assets). It's fully static — no
+server, no secrets.
+
+```bash
+cd web
+docker build -t signbox-companion .
+docker run --rm -p 5173:80 signbox-companion   # http://localhost:5173
+```
+
+Then point the CLI at it:
+
+```bash
+signbox agent create --companion-url http://localhost:5173
+```
+
+For a public host, put it behind TLS (Caddy/Traefik/your load balancer) and use
+`--companion-url https://your-host`. The onboarding payload travels in the URL
+**hash**, so it never reaches the server or its logs.
+
 ## Flow
 
 1. The CLI encodes the onboarding actions + a summary into the URL hash.
