@@ -50,7 +50,7 @@ export class XprOnboardingBackend implements OnboardingBackend {
     this.opts = {
       scheme: "proton",
       pollIntervalMs: 3000,
-      companionBaseUrl: "http://localhost:5173",
+      companionBaseUrl: "https://signbox.rockerone.io",
       ...options,
     };
   }
