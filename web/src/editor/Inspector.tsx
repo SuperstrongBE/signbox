@@ -113,7 +113,9 @@ function ruleSteps(
       const arr = src !== undefined ? values.get(src.id) : undefined;
       const ok = values.get(n.id) === true;
       const path = src !== undefined && src.type === "getfield" ? String(src.fields["path"]) : "array";
-      out.push(<Step key={n.id} label={`${path} contains “${substitute(String(f["value"]), action)}”`} value={`${fmtValue(arr)} → ${ok}`} kind={ok ? "ok" : "no"} />);
+      // Contains needs a list input; a scalar can never match — spell that out.
+      const rhs = Array.isArray(arr) ? `${fmtValue(arr)} → ${ok}` : `${fmtValue(arr)} is not a list → ${ok}`;
+      out.push(<Step key={n.id} label={`${path} contains “${substitute(String(f["value"]), action)}”`} value={rhs} kind={ok ? "ok" : "no"} />);
     }
   }
   return out;
