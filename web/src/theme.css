@@ -185,7 +185,7 @@
 .gnode.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 12px 34px -10px #000c; }
 .gnode.hot { box-shadow: 0 0 0 1.5px var(--hc, var(--allow)), 0 0 22px -6px var(--hc, var(--allow)), 0 12px 34px -10px #000c; }
 .gnode.skipdim { opacity: 0.42; }
-.gnode .hd { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0; cursor: grab; background: linear-gradient(180deg, color-mix(in srgb, var(--c, var(--accent)) 26%, var(--panel2)), var(--panel2)); }
+.gnode .hd { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-bottom: 1px solid var(--line); cursor: grab; background: color-mix(in srgb, var(--c, var(--accent)) 15%, var(--panel2)); }
 .gnode .hd .sw { width: 8px; height: 8px; border-radius: 2px; background: var(--c, var(--accent)); box-shadow: 0 0 8px -1px var(--c, var(--accent)); flex: none; }
 .gnode .hd .ttl { font-weight: 620; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gnode .hd .bdg { margin-left: auto; font-family: var(--monoxs); font-size: 9px; padding: 1px 5px; border-radius: 4px; background: #0a0c11; color: var(--mut); max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
