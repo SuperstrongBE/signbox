@@ -17,7 +17,7 @@ type State =
 
 export function AgentsView({ onEdit }: { onEdit: (agent: string) => void }) {
   const { network, endpoints, explorer } = useNetwork();
-  const { session, connecting, connect, error } = useWallet();
+  const { session, connecting, openPicker } = useWallet();
   const [state, setState] = useState<State>({ kind: "loading" });
 
   const authority = session?.actor ?? null;
@@ -45,13 +45,12 @@ export function AgentsView({ onEdit }: { onEdit: (agent: string) => void }) {
           <div className="gatemark" aria-hidden="true" />
           <h1>Connect your wallet</h1>
           <p>
-            SignBox shows the agents <b>you</b> control. Connect the authority account on{" "}
-            <code>{network}</code> to see and edit their policies.
+            SignBox shows the agents <b>you</b> control. Connect your authority account — you&apos;ll pick
+            testnet or mainnet — to see and edit their policies.
           </p>
-          <button className="pushbtn gatebtn" onClick={() => void connect()} disabled={connecting}>
-            {connecting ? "Opening wallet…" : `Connect ${network} wallet`}
+          <button className="pushbtn gatebtn" onClick={openPicker} disabled={connecting !== null}>
+            {connecting !== null ? "Opening wallet…" : "Connect wallet"}
           </button>
-          {error !== null && <div className="gateerr">⚠ {error}</div>}
         </div>
       </section>
     );

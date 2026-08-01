@@ -1,54 +1,74 @@
 /**
- * Global wallet session. Connecting proves who the AUTHORITY is — the app then
- * only ever shows and edits the agents that authority controls. A wallet
- * session is chain-specific, so switching network drops it (reconnect required).
- * SignBox never sees a key: the authority signs in its own wallet.
+ * Global wallet session. The NETWORK is chosen at connect time: "Connect
+ * wallet" opens a picker (testnet / mainnet) which sets the network and opens
+ * the WebAuth session for it. Being connected therefore means "connected to
+ * network N as authority A"; the app only ever shows/edits A's agents on N.
+ * Switching network = disconnect + reconnect. SignBox never sees a key.
  */
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { useNetwork } from "./NetworkContext";
-import { SIGNBOX_CONTRACT } from "../networks";
+import { NETWORKS, SIGNBOX_CONTRACT, type NetworkName } from "../networks";
 import { connectNetwork, type Connected } from "../wallet";
+import { ConnectModal } from "../components/ConnectModal";
 
 interface WalletState {
   session: Connected | null;
-  connecting: boolean;
+  /** The network currently being connected, or null. */
+  connecting: NetworkName | null;
   error: string | null;
-  connect: () => Promise<void>;
+  pickerOpen: boolean;
+  openPicker: () => void;
+  closePicker: () => void;
+  connect: (network: NetworkName) => Promise<void>;
   disconnect: () => void;
 }
 
 const WalletContext = createContext<WalletState | null>(null);
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const { network, endpoints, chainId } = useNetwork();
+  const { setNetwork } = useNetwork();
   const [session, setSession] = useState<Connected | null>(null);
-  const [connecting, setConnecting] = useState(false);
+  const [connecting, setConnecting] = useState<NetworkName | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
-  // A session is bound to one chain — drop it whenever the network changes.
-  useEffect(() => {
-    setSession(null);
-    setError(null);
-  }, [network]);
-
-  const connect = useCallback(async () => {
-    setConnecting(true);
-    setError(null);
-    try {
-      setSession(await connectNetwork(endpoints, chainId, SIGNBOX_CONTRACT));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setConnecting(false);
-    }
-  }, [endpoints, chainId]);
+  const connect = useCallback(
+    async (network: NetworkName) => {
+      setNetwork(network); // the rest of the app follows the connected network
+      setConnecting(network);
+      setError(null);
+      try {
+        const desc = NETWORKS[network];
+        setSession(await connectNetwork(desc.endpoints, desc.chainId, SIGNBOX_CONTRACT));
+        setPickerOpen(false);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setConnecting(null);
+      }
+    },
+    [setNetwork],
+  );
 
   const disconnect = useCallback(() => setSession(null), []);
+  const openPicker = useCallback(() => {
+    setError(null);
+    setPickerOpen(true);
+  }, []);
+  const closePicker = useCallback(() => setPickerOpen(false), []);
+
+  // Close the picker once a session lands.
+  useEffect(() => {
+    if (session !== null) setPickerOpen(false);
+  }, [session]);
 
   return (
-    <WalletContext.Provider value={{ session, connecting, error, connect, disconnect }}>
+    <WalletContext.Provider
+      value={{ session, connecting, error, pickerOpen, openPicker, closePicker, connect, disconnect }}
+    >
       {children}
+      {pickerOpen && session === null && <ConnectModal />}
     </WalletContext.Provider>
   );
 }

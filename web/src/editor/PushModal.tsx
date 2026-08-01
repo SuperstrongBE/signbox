@@ -37,7 +37,7 @@ export function PushModal({
   onClose: () => void;
 }) {
   const { network, endpoints, explorer } = useNetwork();
-  const { session, connecting, connect } = useWallet();
+  const { session, connecting, openPicker } = useWallet();
   const [agents, setAgents] = useState<AgentsState>({ kind: "loading" });
   const [selected, setSelected] = useState<string>(preselect);
   const [hash, setHash] = useState<string>("");
@@ -156,8 +156,8 @@ export function PushModal({
           {phase.kind === "done" ? (
             <button className="pushbtn" onClick={onClose}>Done</button>
           ) : session === null ? (
-            <button className="pushbtn" onClick={() => void connect()} disabled={connecting}>
-              {connecting ? "Opening wallet…" : `Connect ${network} wallet`}
+            <button className="pushbtn" onClick={openPicker} disabled={connecting !== null}>
+              {connecting !== null ? "Opening wallet…" : "Connect wallet"}
             </button>
           ) : (
             <button className="pushbtn" onClick={onPush} disabled={phase.kind === "signing" || hash === "" || row === undefined}>
