@@ -8,7 +8,7 @@
  * chainId of the globally selected network.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNetwork } from "../context/NetworkContext";
 import { GraphProvider, useGraph, type GraphState } from "../editor/store";
 import { GraphCanvas } from "../editor/GraphCanvas";
@@ -18,9 +18,22 @@ import { evaluateGraph } from "../editor/eval";
 import { compilePolicy, type CompileResult } from "../editor/compile";
 import { decompilePolicy } from "../editor/decompile";
 import { SAMPLES } from "../editor/samples";
+import { loadTestTxs, saveTestTx, txToSampleActions, TEST_CHAIN } from "../editor/testTx";
 import { getPolicy } from "../chain/rpc";
 import { SIGNBOX_CONTRACT } from "../networks";
-import type { NodeType } from "../editor/types";
+import type { NodeType, SampleAction, TestTx } from "../editor/types";
+
+/** Resolve the picker's key ("builtin:N" | "custom:NAME") to simulator actions. */
+function resolveActions(selected: string, customTxs: TestTx[]): SampleAction[] {
+  if (selected.startsWith("custom:")) {
+    const name = selected.slice("custom:".length);
+    const found = customTxs.find((t) => t.name === name);
+    if (found !== undefined) return txToSampleActions(found.tx);
+    return SAMPLES[0]?.actions ?? [];
+  }
+  const idx = Number(selected.slice("builtin:".length));
+  return SAMPLES[idx]?.actions ?? SAMPLES[0]?.actions ?? [];
+}
 
 interface PaletteEntry {
   type: NodeType;
@@ -117,11 +130,27 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
   const { state } = useGraph();
   const { chainId, network } = useNetwork();
   const [modal, setModal] = useState<CompileResult | null>(null);
+  const [customTxs, setCustomTxs] = useState<TestTx[]>(() => loadTestTxs(loaded.agent, network));
+  const [selected, setSelected] = useState<string>("builtin:0");
 
-  const sample = SAMPLES[state.sampleIdx] ?? SAMPLES[0];
+  // Refresh the saved tests when the target network changes.
+  useEffect(() => {
+    setCustomTxs(loadTestTxs(loaded.agent, network));
+  }, [loaded.agent, network]);
+
+  const actions = useMemo(() => resolveActions(selected, customTxs), [selected, customTxs]);
   const evaluation = useMemo(
-    () => evaluateGraph(state.nodes, state.wires, sample?.actions ?? []),
-    [state.nodes, state.wires, sample],
+    () => evaluateGraph(state.nodes, state.wires, actions),
+    [state.nodes, state.wires, actions],
+  );
+
+  const onSaveTest = useCallback(
+    (name: string, tx: unknown) => {
+      saveTestTx(loaded.agent, { name, tx, chain: TEST_CHAIN, network });
+      setCustomTxs(loadTestTxs(loaded.agent, network));
+      setSelected(`custom:${name}`);
+    },
+    [loaded.agent, network],
   );
 
   function onCommit() {
@@ -143,7 +172,15 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
       </div>
       <Palette />
       <GraphCanvas evaluation={evaluation} />
-      <Inspector evaluation={evaluation} onCommit={onCommit} />
+      <Inspector
+        evaluation={evaluation}
+        onCommit={onCommit}
+        selected={selected}
+        onSelect={setSelected}
+        customTxs={customTxs}
+        network={network}
+        onSaveTest={onSaveTest}
+      />
       {modal !== null && (
         <PushModal compiled={modal} preselect={loaded.agent} onClose={() => setModal(null)} />
       )}

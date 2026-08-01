@@ -4,9 +4,10 @@
  * the commit button. Multi-action samples show the three-tier breakdown.
  */
 
-import type { ReactNode } from "react";
-import type { GraphNode, SampleAction } from "./types";
+import { useState, type ReactNode } from "react";
+import type { GraphNode, SampleAction, TestTx } from "./types";
 import { SAMPLES } from "./samples";
+import { TestTxModal } from "./TestTxModal";
 import { useGraph } from "./store";
 import {
   SKIP,
@@ -118,12 +119,27 @@ function ruleSteps(
   return out;
 }
 
-export function Inspector({ evaluation, onCommit }: { evaluation: Evaluation; onCommit: () => void }) {
-  const { state, dispatch } = useGraph();
-  const sample = SAMPLES[state.sampleIdx] ?? SAMPLES[0];
-  if (sample === undefined) return null;
-  const actions = sample.actions;
-  const first = actions[0] as SampleAction;
+export function Inspector({
+  evaluation,
+  onCommit,
+  selected,
+  onSelect,
+  customTxs,
+  network,
+  onSaveTest,
+}: {
+  evaluation: Evaluation;
+  onCommit: () => void;
+  selected: string;
+  onSelect: (key: string) => void;
+  customTxs: TestTx[];
+  network: string;
+  onSaveTest: (name: string, tx: unknown) => void;
+}) {
+  const { state } = useGraph();
+  const [showAdd, setShowAdd] = useState(false);
+  const actions = evaluation.perAction.map((p) => p.action);
+  const first = actions[0] as SampleAction | undefined;
   const multi = actions.length > 1;
   const hotColor = evaluation.final === "allow" ? "var(--allow)" : "var(--deny)";
   const hasRules = state.nodes.some((n) => n.type === "decision");
@@ -132,34 +148,51 @@ export function Inspector({ evaluation, onCommit }: { evaluation: Evaluation; on
     <aside className="inspector">
       <div className="isec">
         <h4>Incoming transaction</h4>
-        <select
-          className="txpick"
-          value={state.sampleIdx}
-          onChange={(e) => dispatch({ type: "set-sample", idx: Number(e.target.value) })}
-        >
-          {SAMPLES.map((s, i) => (
-            <option key={s.label} value={i}>{s.label}</option>
-          ))}
-        </select>
-        <div className="txbox">
-          {multi ? (
-            <>
-              <span className="a">{actions.length} actions</span> <span className="m">— each</span>{" "}
-              {first.contract}::{first.action} {first.data.quantity.amount} {first.data.quantity.symbol} →{" "}
-              {first.data.to} <span className="m">(×{actions.length})</span>
-            </>
-          ) : (
-            <>
-              <span className="a">{first.contract}::{first.action}</span>
-              <br />
-              <span className="m">from</span> {first.data.from}
-              {first.data.to !== "" && (<><br /><span className="m">to</span> {first.data.to}</>)}
-              {first.data.quantity.amount !== "" && (
-                <><br /><span className="m">quantity</span> {first.data.quantity.amount} {first.data.quantity.symbol}</>
-              )}
-            </>
-          )}
+        <div className="txpickrow">
+          <select className="txpick" value={selected} onChange={(e) => onSelect(e.target.value)}>
+            <optgroup label="Samples">
+              {SAMPLES.map((s, i) => (
+                <option key={s.label} value={`builtin:${i}`}>{s.label}</option>
+              ))}
+            </optgroup>
+            {customTxs.length > 0 && (
+              <optgroup label="Your tests">
+                {customTxs.map((t) => (
+                  <option key={t.name} value={`custom:${t.name}`}>{t.name}</option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+          <button
+            className="txaddbtn"
+            title="Add a custom test transaction"
+            aria-label="Add a custom test transaction"
+            onClick={() => setShowAdd(true)}
+          >
+            +
+          </button>
         </div>
+        {first !== undefined && (
+          <div className="txbox">
+            {multi ? (
+              <>
+                <span className="a">{actions.length} actions</span> <span className="m">— each</span>{" "}
+                {first.contract}::{first.action} {first.data.quantity.amount} {first.data.quantity.symbol} →{" "}
+                {first.data.to} <span className="m">(×{actions.length})</span>
+              </>
+            ) : (
+              <>
+                <span className="a">{first.contract}::{first.action}</span>
+                <br />
+                <span className="m">from</span> {first.data.from}
+                {first.data.to !== "" && (<><br /><span className="m">to</span> {first.data.to}</>)}
+                {first.data.quantity.amount !== "" && (
+                  <><br /><span className="m">quantity</span> {first.data.quantity.amount} {first.data.quantity.symbol}</>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="isec">
@@ -205,7 +238,7 @@ export function Inspector({ evaluation, onCommit }: { evaluation: Evaluation; on
             </>
           )}
 
-          {hasRules && !multi && (evaluation.perAction[0]?.decisions ?? []).map((r) => (
+          {hasRules && !multi && first !== undefined && (evaluation.perAction[0]?.decisions ?? []).map((r) => (
             <TraceCard
               key={r.node.id}
               title={ruleLabel(state.nodes, state.wires, r.node)}
@@ -231,6 +264,17 @@ export function Inspector({ evaluation, onCommit }: { evaluation: Evaluation; on
           Commit policy on-chain →
         </button>
       </div>
+
+      {showAdd && (
+        <TestTxModal
+          network={network}
+          onSave={(name, tx) => {
+            onSaveTest(name, tx);
+            setShowAdd(false);
+          }}
+          onClose={() => setShowAdd(false)}
+        />
+      )}
     </aside>
   );
 }

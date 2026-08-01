@@ -18,7 +18,6 @@ export interface GraphState {
   nodes: GraphNode[];
   wires: Wire[];
   selected: number | null;
-  sampleIdx: number;
   view: ViewTransform;
   nextId: number;
 }
@@ -30,7 +29,6 @@ export type GraphAction =
   | { type: "set-field"; id: number; key: string; value: string | boolean }
   | { type: "add-wire"; from: { node: number; key: string }; to: { node: number; key: string } }
   | { type: "select"; id: number | null }
-  | { type: "set-sample"; idx: number }
   | { type: "set-view"; view: ViewTransform }
   | { type: "reset-demo" };
 
@@ -91,8 +89,6 @@ function reducer(state: GraphState, action: GraphAction): GraphState {
       return addWire(state, action.from, action.to);
     case "select":
       return { ...state, selected: action.id };
-    case "set-sample":
-      return { ...state, sampleIdx: action.idx };
     case "set-view":
       return { ...state, view: action.view };
     case "reset-demo":
@@ -159,7 +155,6 @@ export function demoState(): GraphState {
       W(decB, "out", pol, "in"),
     ],
     selected: txn.id,
-    sampleIdx: 0,
     view: { x: 0, y: 0, z: 1 },
     nextId: id,
   };

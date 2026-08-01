@@ -54,12 +54,22 @@ export interface Wire {
 export interface SampleAction {
   contract: string;
   action: string;
-  data: { from: string; to: string; quantity: { amount: string; symbol: string } };
+  // `from`/`to`/`quantity` are always present (defaulted) so the interpreter is
+  // safe; a pasted tx may carry extra data fields the policy references.
+  data: { from: string; to: string; quantity: { amount: string; symbol: string }; [key: string]: unknown };
 }
 
 export interface Sample {
   label: string;
   actions: SampleAction[];
+}
+
+/** A user-saved test transaction (localStorage, per agent + chain + network). */
+export interface TestTx {
+  name: string;
+  tx: unknown; // the raw pasted transaction (validated as { actions: [...] })
+  chain: string; // "xpr" for now
+  network: string; // "testnet" | "mainnet"
 }
 
 /** Fixed node geometry (used for ports and fit-view). */
