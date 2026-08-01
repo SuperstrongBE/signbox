@@ -15,16 +15,22 @@ export interface Connected {
 }
 
 export async function connect(payload: OnboardPayload): Promise<Connected> {
+  return openSession(payload.endpoints, payload.chainId, payload.signboxContract);
+}
+
+/** Open a wallet session for the selected network (used by the policy editor). */
+export async function connectNetwork(
+  endpoints: string[],
+  chainId: string,
+  requestAccount: string,
+): Promise<Connected> {
+  return openSession(endpoints, chainId, requestAccount);
+}
+
+async function openSession(endpoints: string[], chainId: string, requestAccount: string): Promise<Connected> {
   const { session, link } = await ConnectWallet({
-    linkOptions: {
-      endpoints: payload.endpoints,
-      chainId: payload.chainId,
-      restoreSession: false,
-    },
-    transportOptions: {
-      requestAccount: payload.signboxContract,
-      requestStatus: true,
-    },
+    linkOptions: { endpoints, chainId, restoreSession: false },
+    transportOptions: { requestAccount, requestStatus: true },
   });
 
   if (session === undefined) {

@@ -20,6 +20,10 @@ import { QuotaJournal } from "../daemon/quotaJournal.js";
 import { PolicyCache } from "../daemon/policyCache.js";
 import { ChainPolicyReader } from "../daemon/chainPolicyReader.js";
 import { AuditLog } from "../daemon/auditLog.js";
+import { XprTransactionBroadcaster } from "../daemon/broadcaster.js";
+import type { TransactionBroadcaster } from "../daemon/broadcaster.js";
+import { XprChainReadRelay } from "../daemon/chainRelay.js";
+import type { ChainReadRelay } from "../daemon/chainRelay.js";
 import { XprTransactionSigner } from "../chains/xpr/adapter.js";
 import { decodeXprTransaction } from "../chains/xpr/decode.js";
 import { openKeystoreFile, wipeSecret } from "../keystore/encryptedFile.js";
@@ -35,10 +39,12 @@ export interface RunningDaemon {
   shutdown: () => Promise<void>;
 }
 
-/** Test seams: inject a fake chain reader / signer / clock. */
+/** Test seams: inject a fake chain reader / signer / broadcaster / clock. */
 export interface DaemonRunnerOverrides {
   policyReader?: PolicyReader;
   signer?: TransactionSigner;
+  broadcaster?: TransactionBroadcaster;
+  relay?: ChainReadRelay;
   now?: () => number;
 }
 
@@ -72,6 +78,13 @@ export async function startDaemonFromConfig(
       },
     });
 
+  const broadcaster =
+    overrides.broadcaster ??
+    new XprTransactionBroadcaster({ endpoints: config.endpoints, chainId: config.chainId });
+  const relay =
+    overrides.relay ??
+    new XprChainReadRelay({ endpoints: config.endpoints, chainId: config.chainId });
+
   const quotas = new QuotaJournal(config.stateDbPath);
   const policyReader =
     overrides.policyReader ??
@@ -86,8 +99,8 @@ export async function startDaemonFromConfig(
   const daemon = new SignBoxDaemon(
     { socketPath: config.socketPath, adminSocketPath: config.adminSocketPath },
     overrides.now === undefined
-      ? { decode: decodeXprTransaction, signer, quotas, policyCache, audit }
-      : { decode: decodeXprTransaction, signer, quotas, policyCache, audit, now: overrides.now },
+      ? { decode: decodeXprTransaction, signer, broadcaster, relay, quotas, policyCache, audit }
+      : { decode: decodeXprTransaction, signer, broadcaster, relay, quotas, policyCache, audit, now: overrides.now },
   );
 
   const wipeAll = (): void => {

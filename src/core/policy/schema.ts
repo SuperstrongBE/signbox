@@ -19,6 +19,29 @@ export type MatchOperator =
 
 export type MatchValue = string | MatchOperator;
 
+/**
+ * A deterministic async provider requirement (spec §8.4, INV-008-A). V1 ships
+ * one typed provider: `xpr.rpc.tableRow`. It reads a single row from a table of
+ * a contract (key derived from the transaction) and asserts a condition on a
+ * field of that row. It can only NARROW a rule (an extra AND condition), never
+ * widen the rights the policy already grants (INV-008-A).
+ *
+ * `args.*` and `value` may be literals or `$`-variables ($agent,
+ * $agentPermission, or a transaction path like $data.to) resolved against the
+ * action being evaluated. `scope` defaults to `contract` when omitted.
+ */
+export interface TableRowProvider {
+  provider: "xpr.rpc.tableRow";
+  args: { contract: string; scope?: string; table: string; key: string };
+  /** Field of the fetched row to test (single level). */
+  select: string;
+  /** `contains`: the field is an array holding `value`; `eq`: the field equals `value`. */
+  op: "contains" | "eq";
+  value: string;
+}
+
+export type ProviderRequirement = TableRowProvider;
+
 export interface RuleLimits {
   /** Max TOTAL value moved by this rule's matching actions in one transaction. */
   maxPerTransaction?: string;
@@ -36,6 +59,8 @@ export interface PolicyRule {
   effect: "allow" | "deny";
   match: Record<string, MatchValue>;
   limits?: RuleLimits;
+  /** Extra AND conditions resolved against on-chain state (§8.4). */
+  providers?: ProviderRequirement[];
 }
 
 export interface Policy {
@@ -153,6 +178,33 @@ const policyJsonSchema = {
               maxCountPerHour: { type: "integer", minimum: 1, maximum: 1_000_000 },
               maxCountPerDay: { type: "integer", minimum: 1, maximum: 1_000_000 },
               maxCountPerRecipientPerHour: { type: "integer", minimum: 1, maximum: 1_000_000 },
+            },
+          },
+          providers: {
+            type: "array",
+            minItems: 1,
+            maxItems: 8,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["provider", "args", "select", "op", "value"],
+              properties: {
+                provider: { const: "xpr.rpc.tableRow" },
+                args: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["contract", "table", "key"],
+                  properties: {
+                    contract: { type: "string", minLength: 1, maxLength: 64 },
+                    scope: { type: "string", minLength: 1, maxLength: 64 },
+                    table: { type: "string", minLength: 1, maxLength: 64 },
+                    key: { type: "string", minLength: 1, maxLength: 64 },
+                  },
+                },
+                select: { type: "string", pattern: "^[a-zA-Z0-9_]{1,64}$" },
+                op: { enum: ["contains", "eq"] },
+                value: { type: "string", minLength: 1, maxLength: 256 },
+              },
             },
           },
         },

@@ -745,6 +745,35 @@ Recommended V1 providers:
 
 A generic HTTP provider is more dangerous than a typed RPC provider. It must require: allowlisted URL, fixed method, response schema, size limit, no redirects and valid TLS.
 
+#### Implemented — `xpr.rpc.tableRow` (v0.4)
+
+The first typed provider is shipped and scoped. A rule may carry a `providers` array; each requirement reads one row and asserts a condition on a field of it. It only NARROWS a rule (extra AND condition), never widens rights (INV-008-A).
+
+```json
+{
+  "id": "allow-whitelisted-recipients",
+  "effect": "allow",
+  "match": { "contract": "eosio.token", "action": "transfer", "data.from": "$agent" },
+  "providers": [
+    {
+      "provider": "xpr.rpc.tableRow",
+      "args": { "contract": "whitelister", "scope": "whitelister", "table": "lists", "key": "$agent" },
+      "select": "allowed",
+      "op": "contains",
+      "value": "$data.to"
+    }
+  ]
+}
+```
+
+→ *allow the transfer only if the on-chain row `lists[$agent]` of contract `whitelister` has an `allowed` array that contains the recipient `$data.to`.*
+
+- `args.*` and `value` are literals or `$`-variables ($agent, $agentPermission, or a transaction path like `$data.to`) resolved against the action; `scope` defaults to `contract`.
+- operators: **`contains`** (array field holds the value) and **`eq`** (scalar field equals the value).
+- **Execution model (keeps the engine pure).** The engine lists the queries it needs (`collectProviderQueries`, a pure pass over statically-matching rules); the daemon resolves them through the read-only relay (`get_table_rows`) with a strict timeout, normalizes the row into *evidence*, and injects it back; the engine then evaluates deterministically. The evidence key is `canonical(provider + resolved args)`, so resolver and engine agree exactly.
+- **Fail closed.** An unreachable relay, a timeout, or a malformed response ⇒ evidence `{ ok: false }` ⇒ **`PROVIDER_UNAVAILABLE`** refusal. A *successful* query that finds no row is a deterministic "not found" (condition false), distinct from "could not resolve".
+- **Caveats.** TOCTOU (the row may change before the tx lands — for an absolute invariant, enforce on-chain per INV-006) and RPC trust (chain id is pinned; read against irreversible state for high-value gating). `notContains`/`neq` and multi-level `select` are deferred.
+
 ### 8.5 Required state
 
 Some rules are stateful:
@@ -762,7 +791,9 @@ Evaluation and consumption recording must be atomic in order to prevent two conc
 
 - a restore or loss of the local journal resets the counters;
 - two misconfigured daemon instances keep independent counters;
-- the quota is consumed **at signing time**, not at broadcast time: a transaction signed but never pushed consumes quota, and a re-submission of the same digest must be recognized as idempotent before any new debit.
+- **when to consume depends on who submits:**
+  - **sign-only path** (the signature is returned to the caller): quota is consumed **at signing time**. Once the signature leaves SignBox it is a bearer credential that can be broadcast until it expires, so it must count even if never pushed — releasing it would open a double-spend. Re-submission of the same digest is idempotent (no new debit).
+  - **daemon-owned submit path** (`sign --push` / `broadcast: true`): SignBox signs, broadcasts, and the signature never leaves the daemon, so quota follows the **chain outcome** — reserved before signing, then *committed* only if the tx lands, *released* on a deterministic chain rejection (insufficient NET/CPU/RAM, `eosio_assert`, bad auth, expired). An ambiguous transport failure (timeout) keeps the reservation (fail closed — the tx may have landed). This is why a broadcast that the chain rejects frees its quota instead of burning it.
 
 Any cap that must be absolutely guaranteed must be enforced on-chain (contract, permission), not only in SignBox (INV-006).
 
@@ -1050,10 +1081,10 @@ signbox transaction sign --agent superagent --transaction transaction.json --pus
 Semantics:
 
 - `inspect` decodes without policy and without signing;
-- `explain` evaluates without signing;
+- `explain` evaluates the transaction against the agent's **on-chain** policy (INV-004) without signing, applying the same integrity gate as the daemon (§8.6); permission and version come from the on-chain row. A local `--policy <file>` **overrides** the on-chain policy so an author can test a policy **before** deploying it (schema-validated only — a hand-authored file has no hash yet);
 - `sign` returns a signed transaction and broadcasts nothing;
-- `push` broadcasts an already-signed transaction;
-- `sign --push` combines both steps with explicit intent.
+- `push` broadcasts an already-signed transaction (a signature produced earlier by sign-only);
+- `sign --push` signs **and submits through the daemon** with explicit intent. On this path the signature never leaves SignBox and the stateful quota follows the chain outcome (committed only if the tx lands, released on a deterministic rejection — §8.5). The response carries a `broadcast` report (`accepted` / `rejected` / `ambiguous`) and the quota's fate.
 
 The default output is structured JSON. Secrets are never included.
 
@@ -1063,6 +1094,15 @@ All these commands accept the transaction **only as unserialized JSON** (INV-014
 
 - `explain` is rate-limited;
 - neither `explain` nor `safeReason` reveal the exact values of thresholds, lists or rules — only a refusal category.
+
+### 11.6.1 Read-only agent surfaces (identity + chain relay)
+
+An agent talks only to the daemon socket and has no RPC of its own. Two read-only operations ride the same authenticated socket (same rotating token, §12.3), and **never** touch policy, quota, or the signer:
+
+- **`whoami`** (`signbox agent whoami`): returns the agent's own public identity — account, permission, public key, chain/network. It answers the practical "what account should I be funded on?" without the agent needing to be told out-of-band. It never returns key material.
+- **`query`** (`signbox chain query` / `chain balance` / `chain abi`): a relay to a **strict allow-list of read-only** chain methods (`get_account`, `get_currency_balance`, `get_table_rows`, `get_abi`, …) through the daemon's pinned endpoints (INV-009). It lets the agent read balances, accounts, tables, and ABIs (to see how an action is shaped) using clear on-chain data.
+
+The relay is explicitly **outside the signing trust boundary**: it can never submit or compute a transaction (`push_transaction`, `send_transaction`, read-only/compute tx are refused), so the policy gate cannot be bypassed through it (INV-011). A hijacked agent gains, at most, the ability to *read* public chain data it could already read elsewhere. Endpoints are operator config, not agent-controlled, so the relay is not an SSRF surface.
 
 ### 11.7 Documentation and agent surfaces
 
@@ -1185,18 +1225,19 @@ Validate provider evidence
   ↓
 Evaluate allow rules
   ↓
-Sign only, or sign+push when explicitly requested
-  ↓
-Reserve stateful quotas atomically
+Reserve stateful quotas atomically  (BEFORE signing)
   ↓
 Sign transaction digest
   ↓
-Commit quota journal
-  ↓
-Return signature
+┌─ sign-only path ──────────────┐   ┌─ submit path (--push) ───────────────────┐
+│ Commit quota journal          │   │ Broadcast (signature stays in the daemon) │
+│ Return the signature          │   │   accepted  → commit quota, return receipt│
+└───────────────────────────────┘   │   rejected  → RELEASE quota (nothing spent)│
+                                     │   ambiguous → keep quota (fail closed)     │
+                                     └────────────────────────────────────────────┘
 ```
 
-If any step fails: refusal.
+If any step before signing fails: refusal. On the submit path, a deterministic chain rejection releases the reservation (the tx did not land and its bytes never left SignBox), so a failed broadcast never burns quota.
 
 ---
 

@@ -4,11 +4,16 @@
  *
  * Semantics (§11.6):
  * - `transaction inspect`  decodes without policy and without signing;
- * - `transaction explain`  evaluates a local policy without signing;
+ * - `transaction explain`  evaluates the agent's on-chain policy without
+ *                          signing (same integrity gate as the daemon), or a
+ *                          local --policy file to test one before deploying;
  * - `transaction sign`     asks the RUNNING DAEMON to sign (the CLI holds
  *                          no key and evaluates no policy on this path);
  * - `transaction push`     broadcasts an already-signed transaction;
- * - `sign --push`          combines both with explicit intent.
+ * - `sign --push`          signs AND submits through the daemon: the signature
+ *                          never leaves it and the stateful quota follows the
+ *                          chain outcome (committed only if the tx lands,
+ *                          released on a deterministic rejection — §13).
  *
  * Output is structured JSON on stdout. Secrets never appear (INV-002).
  */
@@ -28,12 +33,16 @@ import qrcodeTerminal from "qrcode-terminal";
 import { pinChainId } from "../chains/xpr/adapter.js";
 import { createKeystoreFile } from "../keystore/encryptedFile.js";
 import { validatePolicy } from "../core/policy/schema.js";
-import { evaluatePolicy } from "../core/policy/engine.js";
+import { verifyStoredPolicy } from "../core/policy/onchain.js";
+import { evaluatePolicy, collectProviderQueries } from "../core/policy/engine.js";
+import { resolveProviders } from "../daemon/providerResolver.js";
+import { ChainPolicyReader } from "../daemon/chainPolicyReader.js";
+import { XprChainReadRelay } from "../daemon/chainRelay.js";
 import { SignBoxError } from "../core/errors.js";
 import { DEFAULT_CONFIG_PATH, expandPath, loadConfig, chainContextOf } from "./config.js";
 import { promptPassphrase } from "./passphrase.js";
 import { isInteractive, promptText, promptSelect, validateAccountName } from "./prompt.js";
-import { adminCommand, readToken, signViaDaemon } from "./client.js";
+import { adminCommand, readToken, readViaDaemon, signViaDaemon } from "./client.js";
 import { startDaemonFromConfig, discoverKeystores } from "./daemonRunner.js";
 import { AuditLog } from "../daemon/auditLog.js";
 import type { ChainContext } from "../core/types.js";
@@ -196,36 +205,107 @@ tx.command("inspect")
   });
 
 tx.command("explain")
-  .description("evaluate a local policy against a transaction — no signature")
+  .description(
+    "evaluate a transaction against the agent's on-chain policy — or a local --policy to test one before deploying (§11.6)",
+  )
   .requiredOption("--agent <name>", "agent account name")
   .requiredOption("--transaction <file>", "transaction JSON file")
-  .requiredOption("--policy <file>", "policy JSON file")
-  .option("--permission <name>", "agent permission", "active")
-  .option("--policy-version <n>", "policy version", "1")
-  .option("--network <network>", "XPR network", "testnet")
+  .option("--policy <file>", "evaluate this LOCAL policy instead of the on-chain one (test an undeployed policy)")
+  .option("--permission <name>", "agent permission (only with --policy; on-chain derives it from the row)")
+  .option("--policy-version <n>", "policy version to report (only with --policy)")
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .option("--network <network>", "override the network (endpoints, chain id)")
   .action(
-    (options: {
+    async (options: {
       agent: string;
       transaction: string;
-      policy: string;
-      permission: string;
-      policyVersion: string;
-      network: string;
+      policy?: string;
+      permission?: string;
+      policyVersion?: string;
+      config: string;
+      network?: string;
     }) => {
-      const context = contextFor(options.network);
       try {
-        const policy = validatePolicy(readJsonFile(options.policy));
+        const config = loadConfig(
+          options.config,
+          options.network !== undefined ? { network: options.network } : {},
+        );
+        const context = chainContextOf(config);
+
+        // Resolve the policy to evaluate. Default: the on-chain policy is the
+        // source of truth (INV-004). Override: a local --policy file lets an
+        // author test a policy BEFORE deploying it — schema-validated only (no
+        // hash/canonical gate, since a hand-authored file has neither yet).
+        let policy;
+        let agentPermission: string;
+        let policyVersion: number;
+        let source: string;
+        let meta: Record<string, unknown> = {};
+        if (options.policy !== undefined) {
+          policy = validatePolicy(readJsonFile(options.policy));
+          agentPermission = options.permission ?? "active";
+          policyVersion = Number(options.policyVersion ?? "1");
+          source = "local-file";
+          meta = { policyFile: options.policy };
+        } else {
+          const raw = await new ChainPolicyReader({
+            endpoints: config.endpoints,
+            chainId: config.chainId,
+            contractAccount: config.signboxContract,
+          }).read(options.agent);
+          if (raw === null) {
+            fail(
+              `no on-chain policy for agent "${options.agent}" in contract "${config.signboxContract}" on ${config.network} (deploy one, or pass --policy <file> to test locally)`,
+            );
+          }
+          // Same integrity gate the daemon cache applies (§8.6): hash +
+          // canonical JCS + schema. A tampered row is refused, never dry-run.
+          const verified = verifyStoredPolicy(raw.policyjson, raw.policyhash);
+          if (!verified.ok) {
+            fail(`on-chain policy failed integrity check: ${verified.reason}`);
+          }
+          policy = verified.policy;
+          agentPermission = raw.agentperm;
+          policyVersion = raw.version;
+          source = "on-chain";
+          meta = { contract: config.signboxContract, enabled: raw.enabled, policyhash: raw.policyhash };
+        }
+
         const decoded = decodeXprTransaction(readJsonFile(options.transaction), context);
-        const result = evaluatePolicy(decoded, policy, {
+        const baseCtx = {
           agent: options.agent,
-          agentPermission: options.permission,
+          agentPermission,
           chainId: context.chainId,
-          policyVersion: Number(options.policyVersion),
-        });
+          policyVersion,
+        };
+        // Resolve any providers (§8.4) the same way the daemon does, so the
+        // dry-run matches: read them through the same read-only relay.
+        const queries = collectProviderQueries(decoded, policy, baseCtx);
+        const evidence =
+          queries.length > 0
+            ? await resolveProviders(
+                queries,
+                new XprChainReadRelay({ endpoints: config.endpoints, chainId: config.chainId }),
+              )
+            : undefined;
+        const result = evaluatePolicy(
+          decoded,
+          policy,
+          evidence !== undefined ? { ...baseCtx, evidence } : baseCtx,
+        );
         print({
+          agent: options.agent,
+          source,
+          network: config.network,
+          version: policyVersion,
+          permission: agentPermission,
+          ...meta,
+          providers: queries.length,
           decision: result.decision,
           statefulLimits: result.quotaDemands.length,
         });
+        // Parity with `sign`: a refusal is a non-zero exit for scripting.
+        if (result.decision.effect === "deny") process.exit(2);
       } catch (error) {
         fail((error as Error).message);
       }
@@ -237,24 +317,36 @@ tx.command("sign")
   .requiredOption("--agent <name>", "agent account name")
   .requiredOption("--transaction <file>", "transaction JSON file")
   .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
-  .option("--push", "broadcast after signing (explicit intent, INV-011)", false)
+  .option("--push", "sign AND submit via the daemon (explicit intent, INV-011)", false)
   .action(async (options: { agent: string; transaction: string; config: string; push: boolean }) => {
     try {
       const config = loadConfig(options.config);
+      // With --push the DAEMON broadcasts: the signature never leaves it and
+      // the stateful quota follows the chain outcome (committed only if the tx
+      // lands, released on a deterministic rejection — §13).
       const response = await signViaDaemon({
         socketPath: config.socketPath,
         agent: options.agent,
         context: chainContextOf(config),
         transaction: readJsonFile(options.transaction),
         token: readToken(join(config.tokenDir, `${options.agent}.token`)),
+        broadcast: options.push,
       });
-      if (response.status === "signed" && options.push) {
+
+      // Legacy fallback: a sign-only daemon (no broadcaster) returns the signed
+      // bytes without a broadcast report. Submit them client-side, as before.
+      if (response.status === "signed" && options.push && response.broadcast === undefined) {
         const receipt = await pushSigned(config.endpoints, config.chainId, response.signedTransaction);
         print({ ...response, pushed: true, receipt });
         return;
       }
+
       print(response);
+      // Non-zero exit on anything that did not result in a landed/valid tx.
       if (response.status === "denied") process.exit(2);
+      if (response.status === "signed" && response.broadcast !== undefined && response.broadcast.status !== "accepted") {
+        process.exit(2);
+      }
     } catch (error) {
       fail((error as Error).message);
     }
@@ -299,6 +391,108 @@ async function pushSigned(
   });
 }
 
+// ----------------------------------------------------------------- chain
+
+/** Parse a --params flag into a JSON object, or fail. */
+function parseParamsFlag(json: string): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(json);
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+  } catch {
+    /* fall through to the failure below */
+  }
+  fail("--params must be a JSON object");
+}
+
+const chain = program
+  .command("chain")
+  .description("read-only chain access through the daemon relay (never signs, never submits)");
+
+chain
+  .command("query")
+  .description("call a whitelisted read-only chain method through the daemon")
+  .requiredOption("--agent <name>", "agent account name")
+  .requiredOption("--method <method>", "read-only method, e.g. get_currency_balance, get_account")
+  .option("--params <json>", "JSON params object for the method", "{}")
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .action(async (options: { agent: string; method: string; params: string; config: string }) => {
+    try {
+      const config = loadConfig(options.config);
+      const response = await readViaDaemon({
+        socketPath: config.socketPath,
+        agent: options.agent,
+        token: readToken(join(config.tokenDir, `${options.agent}.token`)),
+        op: "query",
+        method: options.method,
+        params: parseParamsFlag(options.params),
+      });
+      print(response);
+      if (response.status === "error") process.exit(2);
+    } catch (error) {
+      fail((error as Error).message);
+    }
+  });
+
+chain
+  .command("balance")
+  .description("read a token balance through the daemon relay (defaults to the agent's own account)")
+  .requiredOption("--agent <name>", "agent account name")
+  .option("--account <name>", "account to read (default: the agent itself)")
+  .option("--contract <name>", "token contract", "eosio.token")
+  .option("--symbol <symbol>", "token symbol", "XPR")
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .action(
+    async (options: {
+      agent: string;
+      account?: string;
+      contract: string;
+      symbol: string;
+      config: string;
+    }) => {
+      try {
+        const config = loadConfig(options.config);
+        const response = await readViaDaemon({
+          socketPath: config.socketPath,
+          agent: options.agent,
+          token: readToken(join(config.tokenDir, `${options.agent}.token`)),
+          op: "query",
+          method: "get_currency_balance",
+          params: { code: options.contract, account: options.account ?? options.agent, symbol: options.symbol },
+        });
+        print(response);
+        if (response.status === "error") process.exit(2);
+      } catch (error) {
+        fail((error as Error).message);
+      }
+    },
+  );
+
+chain
+  .command("abi")
+  .description("fetch an account's ABI through the relay — to see the actions and their fields")
+  .requiredOption("--agent <name>", "agent account name")
+  .requiredOption("--account <name>", "account whose ABI to read (e.g. eosio.token)")
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .action(async (options: { agent: string; account: string; config: string }) => {
+    try {
+      const config = loadConfig(options.config);
+      const response = await readViaDaemon({
+        socketPath: config.socketPath,
+        agent: options.agent,
+        token: readToken(join(config.tokenDir, `${options.agent}.token`)),
+        op: "query",
+        method: "get_abi",
+        params: { account_name: options.account },
+      });
+      print(response);
+      if (response.status === "error") process.exit(2);
+    } catch (error) {
+      fail((error as Error).message);
+    }
+  });
+
 // ---------------------------------------------------------------- daemon
 
 const daemonCommand = program.command("daemon").description("daemon lifecycle (§11.5)");
@@ -342,6 +536,27 @@ daemonCommand
 // ----------------------------------------------------------------- agent
 
 const agentCommand = program.command("agent").description("agent administration (§11.2)");
+
+agentCommand
+  .command("whoami")
+  .description("print the agent's own identity (account, permission, public key) via the daemon")
+  .requiredOption("--agent <name>", "agent account name")
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .action(async (options: { agent: string; config: string }) => {
+    try {
+      const config = loadConfig(options.config);
+      const response = await readViaDaemon({
+        socketPath: config.socketPath,
+        agent: options.agent,
+        token: readToken(join(config.tokenDir, `${options.agent}.token`)),
+        op: "whoami",
+      });
+      print(response);
+      if (response.status === "error") process.exit(2);
+    } catch (error) {
+      fail((error as Error).message);
+    }
+  });
 
 agentCommand
   .command("create")

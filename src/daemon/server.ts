@@ -32,9 +32,20 @@ import type {
   TransactionSigner,
 } from "../core/types.js";
 import type { Policy } from "../core/policy/schema.js";
-import { evaluatePolicy } from "../core/policy/engine.js";
+import { evaluatePolicy, collectProviderQueries } from "../core/policy/engine.js";
+import { resolveProviders } from "./providerResolver.js";
 import { ValidationError } from "../core/errors.js";
-import { parseSignRequest, type SignRequestJson, type SignResponseJson } from "./protocol.js";
+import {
+  parseSignRequest,
+  parseReadRequest,
+  peekOp,
+  type BroadcastReport,
+  type ReadResponseJson,
+  type SignRequestJson,
+  type SignResponseJson,
+} from "./protocol.js";
+import type { TransactionBroadcaster } from "./broadcaster.js";
+import type { ChainReadRelay } from "./chainRelay.js";
 import { NonceCache } from "./nonceCache.js";
 import type { QuotaJournal } from "./quotaJournal.js";
 import type { PolicyCache } from "./policyCache.js";
@@ -91,6 +102,21 @@ export interface DaemonDependencies {
   decode: (input: unknown, context: ChainContext) => DecodedTransaction;
   /** Path-1 signing seam (§5.5). Called only after an allow decision. */
   signer: TransactionSigner;
+  /**
+   * Broadcast seam (§5.5, §13). Present when the daemon may submit on the
+   * agent's behalf (request `broadcast: true`): the signature never leaves the
+   * daemon and the reserved quota is committed only if the tx lands. Absent in
+   * unit tests and sign-only deployments — a broadcast request then degrades to
+   * a plain signing (the signature is returned for the caller to submit).
+   */
+  broadcaster?: TransactionBroadcaster;
+  /**
+   * Read-only chain relay (agent convenience). Present when the agent may read
+   * public chain data (its balance, an account, a table) through the daemon.
+   * It is a strict read-only allow-list — never a path to submit — so it is
+   * outside the signing trust boundary. Absent → `query` returns an error.
+   */
+  relay?: ChainReadRelay;
   /**
    * Stateful quota journal (§8.5). Without it, any policy demanding
    * stateful limits refuses with QUOTA_UNAVAILABLE — fail closed.
@@ -311,11 +337,82 @@ export class SignBoxDaemon {
    * NEVER throws: every failure maps to a denied response; an audit failure
    * never fails a decision.
    */
-  async handleRequest(line: string): Promise<SignResponseJson> {
+  async handleRequest(line: string): Promise<SignResponseJson | ReadResponseJson> {
+    // Read-only ops (whoami/query) share the socket and token auth but never
+    // touch policy, quota, or the signer. Dispatch them before the sign path.
+    const op = peekOp(line);
+    if (op !== "sign") return this.handleReadRequest(line);
+
     const auditCtx: AuditContext = { agent: "unknown", contracts: [] };
     const response = await this.runDecision(line, auditCtx);
     this.recordAudit(response, auditCtx);
     return response;
+  }
+
+  /**
+   * Handle a read-only request: identity (`whoami`) or a whitelisted chain read
+   * (`query`). Authenticated by the same rotating token; NEVER reaches the
+   * signer or the policy, and cannot submit a transaction (INV-011).
+   */
+  private async handleReadRequest(line: string): Promise<ReadResponseJson> {
+    let request;
+    try {
+      request = parseReadRequest(line);
+    } catch {
+      return { requestId: "unknown", status: "error", op: "query", error: "request does not match the expected schema" };
+    }
+    const err = (message: string): ReadResponseJson => ({
+      requestId: request.requestId,
+      status: "error",
+      op: request.op,
+      error: message,
+    });
+
+    try {
+      // Same authentication as signing: unknown agent and bad token are
+      // indistinguishable (the daemon never reveals which agents exist).
+      const runtime = this.agents.get(request.agent);
+      if (runtime === undefined || !constantTimeEquals(runtime.token, request.token)) {
+        return err("request could not be authenticated");
+      }
+      if (!runtime.enabled) return err("agent is disabled");
+
+      const now = this.now();
+      const requestedAt = Date.parse(request.requestedAt);
+      const expiresAt = Date.parse(request.expiresAt);
+      if (
+        expiresAt <= now ||
+        requestedAt > now + this.cfg.maxClockSkewMs ||
+        expiresAt <= requestedAt ||
+        expiresAt - requestedAt > this.cfg.maxRequestTtlMs
+      ) {
+        return err("request window is invalid or expired");
+      }
+
+      if (request.op === "whoami") {
+        // Public identity only — never the key material.
+        return {
+          requestId: request.requestId,
+          status: "ok",
+          op: "whoami",
+          agent: runtime.agent,
+          permission: runtime.permission,
+          publicKey: runtime.key.publicKey,
+          chain: runtime.chain.chain,
+          network: runtime.chain.network,
+          chainId: runtime.chain.chainId,
+        };
+      }
+
+      // op === "query": read-only chain relay.
+      if (this.deps.relay === undefined) return err("chain relay is not available");
+      if (request.method === undefined) return err("query requires a method");
+      const result = await this.deps.relay.call(request.method, request.params ?? {});
+      return { requestId: request.requestId, status: "ok", op: "query", method: request.method, result };
+    } catch (error) {
+      // Fail closed and never leak internals (INV-010).
+      return err(error instanceof Error ? error.message : "read request failed");
+    }
   }
 
   private recordAudit(response: SignResponseJson, auditCtx: AuditContext): void {
@@ -437,13 +534,25 @@ export class SignBoxDaemon {
       // Contract::action names only — never the data values (§16).
       auditCtx.contracts = decoded.actions.map((a) => `${a.contract}::${a.action}`);
 
-      // Deterministic policy evaluation.
-      const { decision, quotaDemands } = evaluatePolicy(decoded, activePolicy, {
+      // Resolve any deterministic async providers (§8.4) BEFORE evaluation, so
+      // the engine stays pure: list the queries, read them through the relay
+      // (fail closed), and inject the evidence. No providers → no I/O.
+      const baseCtx = {
         agent: runtime.agent,
         agentPermission: runtime.permission,
         chainId: chain.chainId,
         policyVersion: activeVersion,
-      });
+      };
+      const queries = collectProviderQueries(decoded, activePolicy, baseCtx);
+      const evidence =
+        queries.length > 0 ? await resolveProviders(queries, this.deps.relay) : undefined;
+
+      // Deterministic policy evaluation.
+      const { decision, quotaDemands } = evaluatePolicy(
+        decoded,
+        activePolicy,
+        evidence !== undefined ? { ...baseCtx, evidence } : baseCtx,
+      );
 
       if (decision.effect === "deny") {
         return deny(decision.code, decision.safeReason, decision.policyVersion);
@@ -484,10 +593,51 @@ export class SignBoxDaemon {
         }
         throw error;
       }
-      if (reservationId !== undefined) {
-        this.deps.quotas?.commit(reservationId, runtime.agent, signed.transactionDigest);
+
+      const commit = (): void => {
+        if (reservationId !== undefined) {
+          this.deps.quotas?.commit(reservationId, runtime.agent, signed.transactionDigest);
+        }
+      };
+      const release = (): void => {
+        if (reservationId !== undefined) this.deps.quotas?.release(reservationId);
+      };
+      const quotaState = (fate: "committed" | "released"): "committed" | "released" | "none" =>
+        reservationId === undefined ? "none" : fate;
+
+      // Daemon-owned submit path (§13): SignBox broadcasts and the signature
+      // never leaves. The reserved quota follows the CHAIN outcome, not the
+      // mere fact of signing — so a tx rejected on-chain frees its quota.
+      if (request.broadcast === true && this.deps.broadcaster !== undefined) {
+        const outcome = await this.deps.broadcaster.broadcast(signed.signedTransaction);
+        let report: BroadcastReport;
+        if (outcome.status === "accepted") {
+          commit();
+          report = { status: "accepted", receipt: outcome.receipt, quota: quotaState("committed") };
+        } else if (outcome.status === "rejected") {
+          // Deterministic rejection: tx did not land, bytes discarded here →
+          // releasing the reservation cannot enable a replay/double-spend.
+          release();
+          report = { status: "rejected", reason: outcome.reason, quota: quotaState("released") };
+        } else {
+          // Ambiguous: it may have landed → keep the quota (fail closed).
+          commit();
+          report = { status: "ambiguous", reason: outcome.reason, quota: quotaState("committed") };
+        }
+        // The signed bytes are NEVER returned on the submit path.
+        return {
+          requestId: request.requestId,
+          status: "signed",
+          signature: signed.signature,
+          transactionDigest: signed.transactionDigest,
+          policyVersion: decision.policyVersion,
+          broadcast: report,
+        };
       }
 
+      // Plain sign (or no broadcaster available): the signature becomes a
+      // bearer credential the moment it is returned, so it commits on signing.
+      commit();
       const response: SignResponseJson = {
         requestId: request.requestId,
         status: "signed",
