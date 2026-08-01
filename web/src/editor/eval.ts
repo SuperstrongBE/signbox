@@ -399,19 +399,28 @@ function ruleAggregateCheck(perAction: PerAction[]): RuleAggHit | null {
         if (sum > cap) return { decision: g.decision, kind: "cap", sum, cap };
       }
     }
+    const byRecipient: Record<string, number> = {};
+    for (const a of g.actions) {
+      const r = a.data.to || "?";
+      byRecipient[r] = (byRecipient[r] ?? 0) + 1;
+    }
     const rlRaw = String(f["rlCount"] ?? "");
     if (rlRaw !== "" && f["rlPerRecipient"] === true) {
       const limit = parseInt(rlRaw, 10);
       if (!isNaN(limit)) {
-        const byRecipient: Record<string, number> = {};
-        for (const a of g.actions) {
-          const r = a.data.to || "?";
-          byRecipient[r] = (byRecipient[r] ?? 0) + 1;
-        }
         const over = Object.entries(byRecipient).find(([, c]) => c > limit);
         if (over !== undefined) {
           return { decision: g.decision, kind: "rate", recipient: over[0], count: over[1], limit, period: String(f["rlPeriod"]) };
         }
+      }
+    }
+    // A cooldown means a min delay between two actions to the same recipient;
+    // two in the SAME tx (delay 0) already violate it.
+    const cooldownH = parseFloat(String(f["cooldownH"] ?? ""));
+    if (!isNaN(cooldownH) && cooldownH > 0) {
+      const repeat = Object.entries(byRecipient).find(([, c]) => c > 1);
+      if (repeat !== undefined) {
+        return { decision: g.decision, kind: "rate", recipient: repeat[0], count: repeat[1], limit: 1, period: `${cooldownH}h cooldown` };
       }
     }
   }

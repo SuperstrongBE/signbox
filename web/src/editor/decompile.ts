@@ -195,6 +195,7 @@ function decisionFields(rule: Rule, label: string, warnings: string[]): Fields {
   const limits = rule.limits ?? {};
   const supported = new Set([
     "maxPerTransaction",
+    "cooldownPerRecipientMs",
     "maxCountPerRecipientPerHour",
     "maxCountPerHour",
     "maxCountPerDay",
@@ -202,6 +203,10 @@ function decisionFields(rule: Rule, label: string, warnings: string[]): Fields {
   let useLimit = false;
   if (typeof limits["maxPerTransaction"] === "string") {
     fields["maxPerTx"] = limits["maxPerTransaction"] as string;
+    useLimit = true;
+  }
+  if (typeof limits["cooldownPerRecipientMs"] === "number") {
+    fields["cooldownH"] = String(limits["cooldownPerRecipientMs"] / 3_600_000);
     useLimit = true;
   }
   if (typeof limits["maxCountPerRecipientPerHour"] === "number") {

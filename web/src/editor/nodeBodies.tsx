@@ -126,7 +126,8 @@ export function NodeBody({ node }: { node: GraphNode }) {
                 <Field label="per period">{select("rlPeriod", ["hour", "day"])}</Field>
               </div>
               {check("rlPerRecipient", "per recipient")}
-              <div className="glimbadge">🕒 rate limit: local best-effort · sliding window · cross-tx</div>
+              <Field label="cooldown per recipient (hours)">{text("cooldownH", "24")}</Field>
+              <div className="glimbadge">🕒 rate limit &amp; cooldown: local best-effort · sliding window · cross-tx</div>
             </div>
           )}
         </>

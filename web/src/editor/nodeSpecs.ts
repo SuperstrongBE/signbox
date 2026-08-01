@@ -127,6 +127,7 @@ export const SPECS: Record<NodeType, NodeSpec> = {
       rlCount: "",
       rlPeriod: "day",
       rlPerRecipient: true,
+      cooldownH: "",
     }),
   },
   aggregate: {

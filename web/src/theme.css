@@ -228,6 +228,12 @@
 .mhash { font-family: var(--monoxs); font-size: 11px; color: var(--mut); margin-top: 8px; word-break: break-all; }
 .mhash b { color: var(--accent); }
 .mnote { margin-top: 12px; font-size: 11px; color: var(--mut2); line-height: 1.5; }
+.mnote .mono { color: var(--mut); }
+.pushresult { margin-top: 13px; font-size: 12px; font-family: var(--monoxs); border-radius: 8px; padding: 10px; line-height: 1.5; }
+.pushresult a { color: var(--accent); }
+.pushresult.ok { color: var(--allow); background: #0f1c17; border: 1px solid #22513f; }
+.pushresult.warn { color: var(--bool); background: #1c160c; border: 1px solid #4a3a1a; }
+.pushresult.warn b { color: var(--ink); }
 .modal .mf { display: flex; gap: 10px; padding: 14px 16px; border-top: 1px solid var(--line); background: #0e1118; }
 .modal .mf .ghostbtn { flex: none; padding: 9px 14px; }
 .modal .mf .pushbtn { flex: 1; width: auto; }

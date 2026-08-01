@@ -108,6 +108,8 @@ function compileRule(nodes: GraphNode[], wires: Wire[], decision: GraphNode): { 
   if (decision.fields["useLimit"] === true && decision.fields["effect"] === "allow") {
     const limits: Record<string, unknown> = {};
     if (decision.fields["maxPerTx"]) limits["maxPerTransaction"] = decision.fields["maxPerTx"];
+    const cooldownH = parseFloat(String(decision.fields["cooldownH"] ?? ""));
+    if (!isNaN(cooldownH) && cooldownH > 0) limits["cooldownPerRecipientMs"] = Math.round(cooldownH * 3_600_000);
     const rlRaw = String(decision.fields["rlCount"] ?? "");
     if (rlRaw !== "") {
       const count = parseInt(rlRaw, 10) || 1;
