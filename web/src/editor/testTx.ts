@@ -1,10 +1,10 @@
 /**
- * User-saved test transactions, per agent + chain + network.
+ * User-saved test transactions, shared across agents by chain + network.
  *
  * A test is a raw transaction JSON the user pastes ("what would happen if the
  * agent submitted THIS?"). It is validated before storage so a malformed paste
  * can never crash the simulator, and normalised into SampleAction[] for the
- * pure interpreter (`eval.ts`). Storage key: `signbox-<agent>-test-transactions`.
+ * pure interpreter (`eval.ts`). Storage key: `signbox-<chain>-<network>-test-transactions`.
  */
 
 import type { SampleAction, TestTx } from "./types";
@@ -13,13 +13,13 @@ export const TEST_CHAIN = "xpr";
 const MAX_ACTIONS = 16;
 const MAX_JSON_BYTES = 64 * 1024;
 
-export function storageKey(agent: string): string {
-  return `signbox-${agent}-test-transactions`;
+export function storageKey(network: string): string {
+  return `signbox-${TEST_CHAIN}-${network}-test-transactions`;
 }
 
-function readAll(agent: string): TestTx[] {
+function readAll(network: string): TestTx[] {
   try {
-    const raw = localStorage.getItem(storageKey(agent));
+    const raw = localStorage.getItem(storageKey(network));
     if (raw === null) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -39,27 +39,27 @@ function isTestTx(e: unknown): e is TestTx {
   );
 }
 
-/** Tests for the current chain + network only (as required by the picker). */
-export function loadTestTxs(agent: string, network: string): TestTx[] {
-  return readAll(agent).filter((e) => e.chain === TEST_CHAIN && e.network === network);
+/** Tests for the current chain + network (shared across all agents). */
+export function loadTestTxs(network: string): TestTx[] {
+  return readAll(network).filter((e) => e.chain === TEST_CHAIN && e.network === network);
 }
 
-/** Append (or replace a same-name/chain/network) entry, preserving other networks' tests. */
-export function saveTestTx(agent: string, entry: TestTx): void {
-  const all = readAll(agent);
+/** Append (or replace a same-name) entry for its chain + network. */
+export function saveTestTx(entry: TestTx): void {
+  const all = readAll(entry.network);
   const idx = all.findIndex(
     (e) => e.name === entry.name && e.chain === entry.chain && e.network === entry.network,
   );
   if (idx >= 0) all[idx] = entry;
   else all.push(entry);
-  localStorage.setItem(storageKey(agent), JSON.stringify(all));
+  localStorage.setItem(storageKey(entry.network), JSON.stringify(all));
 }
 
-export function deleteTestTx(agent: string, name: string, network: string): void {
-  const all = readAll(agent).filter(
+export function deleteTestTx(name: string, network: string): void {
+  const all = readAll(network).filter(
     (e) => !(e.name === name && e.chain === TEST_CHAIN && e.network === network),
   );
-  localStorage.setItem(storageKey(agent), JSON.stringify(all));
+  localStorage.setItem(storageKey(network), JSON.stringify(all));
 }
 
 export type ValidateResult = { ok: true; tx: unknown } | { ok: false; error: string };

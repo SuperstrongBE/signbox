@@ -130,13 +130,13 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
   const { state } = useGraph();
   const { chainId, network } = useNetwork();
   const [modal, setModal] = useState<CompileResult | null>(null);
-  const [customTxs, setCustomTxs] = useState<TestTx[]>(() => loadTestTxs(loaded.agent, network));
+  const [customTxs, setCustomTxs] = useState<TestTx[]>(() => loadTestTxs(network));
   const [selected, setSelected] = useState<string>("builtin:0");
 
   // Refresh the saved tests when the target network changes.
   useEffect(() => {
-    setCustomTxs(loadTestTxs(loaded.agent, network));
-  }, [loaded.agent, network]);
+    setCustomTxs(loadTestTxs(network));
+  }, [network]);
 
   const actions = useMemo(() => resolveActions(selected, customTxs), [selected, customTxs]);
   const evaluation = useMemo(
@@ -146,11 +146,11 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
 
   const onSaveTest = useCallback(
     (name: string, tx: unknown) => {
-      saveTestTx(loaded.agent, { name, tx, chain: TEST_CHAIN, network });
-      setCustomTxs(loadTestTxs(loaded.agent, network));
+      saveTestTx({ name, tx, chain: TEST_CHAIN, network });
+      setCustomTxs(loadTestTxs(network));
       setSelected(`custom:${name}`);
     },
-    [loaded.agent, network],
+    [network],
   );
 
   function onCommit() {

@@ -64,7 +64,7 @@ export interface Sample {
   actions: SampleAction[];
 }
 
-/** A user-saved test transaction (localStorage, per agent + chain + network). */
+/** A user-saved test transaction (localStorage, shared by chain + network). */
 export interface TestTx {
   name: string;
   tx: unknown; // the raw pasted transaction (validated as { actions: [...] })
