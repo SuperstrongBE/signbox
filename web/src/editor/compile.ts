@@ -134,8 +134,18 @@ export function compilePolicy(nodes: GraphNode[], wires: Wire[], chainId: string
   const warnings: string[] = [];
   for (const dn of decisions) {
     const compiled = compileRule(nodes, wires, dn);
-    rules.push(compiled.rule);
     warnings.push(...compiled.warnings);
+    // A rule whose `match` ends up empty would apply to EVERY action — the
+    // daemon's schema rejects it (match needs ≥1 property) and it is unsafe
+    // anyway. Omit it (safe: removing a match-everything rule only narrows the
+    // policy) and tell the author which one, and how to make it valid.
+    if (Object.keys(compiled.rule.match).length === 0) {
+      warnings.push(
+        `Rule “${compiled.rule.id}” isn’t a valid route (empty match — add a Route If, or a Compare/In List condition) → omitted from the policy.`,
+      );
+      continue;
+    }
+    rules.push(compiled.rule);
   }
   return {
     policy: {

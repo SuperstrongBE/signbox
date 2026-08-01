@@ -78,6 +78,14 @@ export function decompilePolicy(policyJson: string): DecompileResult {
     const match = rule.match ?? {};
     const label = rule.id ?? `rule ${ri + 1}`;
 
+    // An empty match matches EVERY action — the daemon schema rejects it and
+    // it is unsafe. Drop it on load (with a warning) instead of reviving it as
+    // a spurious default route.
+    if (Object.keys(match).length === 0) {
+      warnings.push(`${label}: empty match (would apply to every action) → dropped; add a Route If or a condition if this rule was intended`);
+      return;
+    }
+
     const routeif = add("routeif", COL.route, baseY, {
       contract: typeof match["contract"] === "string" ? (match["contract"] as string) : "eosio.token",
       action: typeof match["action"] === "string" ? (match["action"] as string) : "transfer",
