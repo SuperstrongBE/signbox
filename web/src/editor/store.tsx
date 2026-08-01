@@ -6,7 +6,7 @@
 
 import { createContext, useContext, useReducer, type Dispatch, type ReactNode } from "react";
 import type { Fields, GraphNode, NodeType, Wire } from "./types";
-import { SPECS, isMultiInput } from "./nodeSpecs";
+import { SPECS, isMultiInput, portsCompatible } from "./nodeSpecs";
 
 export interface ViewTransform {
   x: number;
@@ -52,7 +52,8 @@ function addWire(state: GraphState, from: { node: number; key: string }, to: { n
   if (fromNode === undefined || toNode === undefined || from.node === to.node) return state;
   const outPort = SPECS[fromNode.type].ports.find((p) => p.side === "out" && p.key === from.key);
   const inPort = SPECS[toNode.type].ports.find((p) => p.side === "in" && p.key === to.key);
-  if (outPort === undefined || inPort === undefined || outPort.type !== inPort.type) return state;
+  if (outPort === undefined || inPort === undefined) return state;
+  if (!portsCompatible(outPort.type, toNode.type, inPort.key, inPort.type)) return state;
   let wires = state.wires;
   if (!isMultiInput(toNode.type, to.key)) {
     wires = wires.filter((w) => !(w.to.node === to.node && w.to.key === to.key));

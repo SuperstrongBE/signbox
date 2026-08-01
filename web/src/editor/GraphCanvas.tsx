@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { GraphNode as NodeModel, NodeType } from "./types";
 import { NODE_W, portPosition } from "./types";
-import { portIndex } from "./nodeSpecs";
+import { portIndex, portsCompatible } from "./nodeSpecs";
 import { useGraph, type ViewTransform } from "./store";
 import { GraphNodeView } from "./GraphNode";
 import { Wires, type TempWire } from "./Wires";
@@ -131,11 +131,20 @@ export function GraphCanvas({ evaluation }: { evaluation: Evaluation }) {
       const target = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest<HTMLElement>("[data-port-node]");
       if (target === null || target === undefined) return;
       const otherSide = target.dataset["portSide"];
-      const otherType = target.dataset["portType"];
-      if (otherSide === side || otherType !== type) return;
-      const other = { node: Number(target.dataset["portNode"]), key: String(target.dataset["portKey"]) };
+      const otherType = target.dataset["portType"] ?? "";
+      if (otherSide === undefined || otherSide === side) return;
+      const otherNodeId = Number(target.dataset["portNode"]);
+      const other = { node: otherNodeId, key: String(target.dataset["portKey"]) };
       const self = { node: node.id, key };
-      dispatch(side === "out" ? { type: "add-wire", from: self, to: other } : { type: "add-wire", from: other, to: self });
+      // Resolve which end is the out-port, then check compatibility.
+      if (side === "out") {
+        const toNode = state.nodes.find((n) => n.id === otherNodeId);
+        if (toNode === undefined || !portsCompatible(type, toNode.type, other.key, otherType)) return;
+        dispatch({ type: "add-wire", from: self, to: other });
+      } else {
+        if (!portsCompatible(otherType, node.type, key, type)) return;
+        dispatch({ type: "add-wire", from: other, to: self });
+      }
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);

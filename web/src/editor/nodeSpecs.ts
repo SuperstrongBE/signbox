@@ -153,6 +153,17 @@ export function isMultiInput(type: NodeType, key: string): boolean {
   return (type === "booland" || type === "boolor" || type === "policy") && (key === "in");
 }
 
+/**
+ * Whether an out-port may connect to a given in-port. Types must match, with
+ * one exception: Get Field extracts a path from any object, so its `in` accepts
+ * a routed transaction (`tx`) as well as a lookup's json value (`val`).
+ */
+export function portsCompatible(fromType: string, toNode: NodeType, toKey: string, toType: string): boolean {
+  if (fromType === toType) return true;
+  if (toNode === "getfield" && toKey === "in" && fromType === "tx" && toType === "val") return true;
+  return false;
+}
+
 export function portIndex(type: NodeType, key: string, side: "in" | "out"): number {
   return SPECS[type].ports.findIndex((p) => p.key === key && p.side === side);
 }
