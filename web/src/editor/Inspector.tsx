@@ -32,7 +32,9 @@ function fmtValue(v: unknown): string {
 function fmtLookup(v: unknown): string {
   if (v !== null && typeof v === "object" && !Array.isArray(v)) {
     const obj = v as Record<string, unknown>;
-    return `{${Object.keys(obj).slice(0, 2).map((k) => `${k}: ${fmtValue(obj[k])}`).join(", ")}}`;
+    const keys = Object.keys(obj);
+    const shown = keys.slice(0, 5).map((k) => `${k}: ${fmtValue(obj[k])}`).join(", ");
+    return `{${shown}${keys.length > 5 ? ", …" : ""}}`;
   }
   return fmtValue(v);
 }
