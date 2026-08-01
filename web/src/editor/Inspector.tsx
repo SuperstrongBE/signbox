@@ -6,8 +6,8 @@
 
 import { useState, type ReactNode } from "react";
 import type { GraphNode, SampleAction, TestTx } from "./types";
-import { SAMPLES } from "./samples";
 import { TestTxModal } from "./TestTxModal";
+import { TxPicker } from "./TxPicker";
 import { useGraph } from "./store";
 import {
   SKIP,
@@ -127,6 +127,8 @@ export function Inspector({
   customTxs,
   network,
   onSaveTest,
+  onConvertToRoute,
+  onDeleteTest,
 }: {
   evaluation: Evaluation;
   onCommit: () => void;
@@ -135,6 +137,8 @@ export function Inspector({
   customTxs: TestTx[];
   network: string;
   onSaveTest: (name: string, tx: unknown) => void;
+  onConvertToRoute: (tx: unknown) => void;
+  onDeleteTest: (name: string) => void;
 }) {
   const { state } = useGraph();
   const [showAdd, setShowAdd] = useState(false);
@@ -149,20 +153,13 @@ export function Inspector({
       <div className="isec">
         <h4>Incoming transaction</h4>
         <div className="txpickrow">
-          <select className="txpick" value={selected} onChange={(e) => onSelect(e.target.value)}>
-            <optgroup label="Samples">
-              {SAMPLES.map((s, i) => (
-                <option key={s.label} value={`builtin:${i}`}>{s.label}</option>
-              ))}
-            </optgroup>
-            {customTxs.length > 0 && (
-              <optgroup label="Your tests">
-                {customTxs.map((t) => (
-                  <option key={t.name} value={`custom:${t.name}`}>{t.name}</option>
-                ))}
-              </optgroup>
-            )}
-          </select>
+          <TxPicker
+            selected={selected}
+            onSelect={onSelect}
+            customTxs={customTxs}
+            onConvertToRoute={onConvertToRoute}
+            onDelete={onDeleteTest}
+          />
           <button
             className="txaddbtn"
             title="Add a custom test transaction"
@@ -270,6 +267,10 @@ export function Inspector({
           network={network}
           onSave={(name, tx) => {
             onSaveTest(name, tx);
+            setShowAdd(false);
+          }}
+          onConvertToRoute={(tx) => {
+            onConvertToRoute(tx);
             setShowAdd(false);
           }}
           onClose={() => setShowAdd(false)}

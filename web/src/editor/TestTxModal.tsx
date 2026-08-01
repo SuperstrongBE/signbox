@@ -21,10 +21,12 @@ const PLACEHOLDER = `{
 export function TestTxModal({
   network,
   onSave,
+  onConvertToRoute,
   onClose,
 }: {
   network: string;
   onSave: (name: string, tx: unknown) => void;
+  onConvertToRoute: (tx: unknown) => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState("");
@@ -39,17 +41,28 @@ export function TestTxModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  /** Validate the pasted JSON, surfacing the error; null if invalid. */
+  function validated(): unknown | null {
+    const res = validateTxJson(json);
+    if (!res.ok) {
+      setError(res.error);
+      return null;
+    }
+    return res.tx;
+  }
+
   function save() {
     if (name.trim() === "") {
       setError("give the test a name");
       return;
     }
-    const res = validateTxJson(json);
-    if (!res.ok) {
-      setError(res.error);
-      return;
-    }
-    onSave(name.trim(), res.tx);
+    const tx = validated();
+    if (tx !== null) onSave(name.trim(), tx);
+  }
+
+  function convert() {
+    const tx = validated();
+    if (tx !== null) onConvertToRoute(tx);
   }
 
   return (
@@ -81,6 +94,9 @@ export function TestTxModal({
         </div>
         <div className="mf">
           <button className="ghostbtn" onClick={onClose}>Cancel</button>
+          <button className="ghostbtn" onClick={convert} title="Scaffold the routing branch for this transaction">
+            Convert to route
+          </button>
           <button className="pushbtn" onClick={save}>Save test</button>
         </div>
       </div>

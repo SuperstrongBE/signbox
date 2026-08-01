@@ -218,9 +218,26 @@
 .isec { padding: 13px 15px; border-bottom: 1px solid var(--line); }
 .isec h4 { margin: 0 0 9px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--mut2); font-weight: 650; }
 .txpickrow { display: flex; gap: 7px; margin-bottom: 9px; }
-.txpick { flex: 1; min-width: 0; background: #0d1017; border: 1px solid var(--line2); color: var(--ink); border-radius: 6px; padding: 6px 8px; font-size: 12px; font-family: var(--monoxs); }
 .txaddbtn { flex: none; width: 30px; background: #0d1017; border: 1px solid var(--line2); color: var(--mut2); font-size: 17px; line-height: 1; cursor: pointer; }
 .txaddbtn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Custom incoming-transaction picker (delete / convert per saved test). */
+.txsel { flex: 1; min-width: 0; position: relative; }
+.txseltrigger { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; background: #0d1017; border: 1px solid var(--line2); color: var(--ink); padding: 6px 8px; font-size: 12px; font-family: var(--monoxs); cursor: pointer; text-align: left; }
+.txseltrigger:hover { border-color: var(--accent); }
+.txsellabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.txselcaret { flex: none; color: var(--mut2); font-size: 10px; }
+.txselmenu { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 40; max-height: 300px; overflow: auto; padding: 4px; background: #0d1017; border: 1px solid var(--line2); box-shadow: 0 12px 34px #000a; }
+.txselgroup { padding: 7px 8px 4px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--mut2); }
+.txselopt { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--ink); padding: 6px 8px; font-size: 12px; font-family: var(--monoxs); cursor: pointer; }
+.txselopt:hover { background: #161b26; }
+.txselopt.sel, .txselrow.sel { background: #17202e; }
+.txselrow { display: flex; align-items: center; gap: 4px; }
+.txselrow .txselopt.grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.txselact { flex: none; background: none; border: 1px solid var(--line2); color: var(--mut2); font-size: 10px; font-family: var(--monoxs); padding: 3px 6px; cursor: pointer; }
+.txselact:hover { border-color: var(--tx); color: var(--tx); }
+.txseldel { flex: none; background: none; border: none; color: var(--mut2); font-size: 12px; line-height: 1; padding: 3px 6px; cursor: pointer; }
+.txseldel:hover { color: var(--deny); }
 .txbox { font-family: var(--monoxs); font-size: 11px; color: #cdd5e6; background: #0a0c11; border: 1px solid var(--line); border-radius: 7px; padding: 9px; line-height: 1.5; }
 .ttinput { width: 100%; box-sizing: border-box; background: #0d1017; border: 1px solid var(--line2); color: var(--ink); padding: 8px 10px; font-size: 12.5px; }
 .ttinput:focus { outline: none; border-color: var(--accent); }

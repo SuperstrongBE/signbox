@@ -162,12 +162,13 @@ export function GraphCanvas({ evaluation }: { evaluation: Evaluation }) {
 
   const hotColor = evaluation.final === "allow" ? "var(--allow)" : "var(--deny)";
 
-  // Frame the whole graph once on mount (demo or a freshly loaded policy).
+  // Frame the whole graph on mount and whenever a batch of nodes is added
+  // (e.g. "Convert to route"), so freshly scaffolded branches come into view.
   useEffect(() => {
     const raf = requestAnimationFrame(fitView);
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [state.fitNonce]);
 
   return (
     <div

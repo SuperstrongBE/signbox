@@ -144,6 +144,7 @@ export function decompilePolicy(policyJson: string): DecompileResult {
       selected: txn.id,
       view: { x: 0, y: 0, z: 1 },
       nextId: id,
+      fitNonce: 0,
     },
     warnings,
   };

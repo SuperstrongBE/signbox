@@ -20,6 +20,8 @@ export interface GraphState {
   selected: number | null;
   view: ViewTransform;
   nextId: number;
+  /** Bumped when a batch of nodes is added so the canvas re-frames the graph. */
+  fitNonce: number;
 }
 
 export type GraphAction =
@@ -28,6 +30,7 @@ export type GraphAction =
   | { type: "delete-node"; id: number }
   | { type: "set-field"; id: number; key: string; value: string | boolean }
   | { type: "add-wire"; from: { node: number; key: string }; to: { node: number; key: string } }
+  | { type: "add-scaffold"; nodes: GraphNode[]; wires: Wire[]; nextId: number }
   | { type: "select"; id: number | null }
   | { type: "set-view"; view: ViewTransform }
   | { type: "reset-demo" };
@@ -87,6 +90,16 @@ function reducer(state: GraphState, action: GraphAction): GraphState {
       };
     case "add-wire":
       return addWire(state, action.from, action.to);
+    case "add-scaffold":
+      if (action.nodes.length === 0) return state;
+      return {
+        ...state,
+        nodes: [...state.nodes, ...action.nodes],
+        wires: [...state.wires, ...action.wires],
+        nextId: action.nextId,
+        selected: action.nodes[0]?.id ?? state.selected,
+        fitNonce: state.fitNonce + 1,
+      };
     case "select":
       return { ...state, selected: action.id };
     case "set-view":
@@ -157,6 +170,7 @@ export function demoState(): GraphState {
     selected: txn.id,
     view: { x: 0, y: 0, z: 1 },
     nextId: id,
+    fitNonce: 0,
   };
 }
 

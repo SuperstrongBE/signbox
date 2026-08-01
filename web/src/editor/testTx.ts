@@ -125,3 +125,49 @@ function normalizeData(d: Record<string, unknown>): SampleAction["data"] {
   }
   return { ...d, from: String(d.from ?? ""), to: String(d.to ?? ""), quantity };
 }
+
+/** One routing branch to scaffold: a contract::action match + its data fields. */
+export interface RouteStub {
+  contract: string;
+  action: string;
+  paths: string[]; // leaf paths under `data`, e.g. "data.to", "data.quantity.amount"
+}
+
+/** Distinct contract::action pairs in a tx, each with the data fields to expose. */
+export function txToRoutes(tx: unknown): RouteStub[] {
+  const actions = extractActions(tx) ?? [];
+  const seen = new Map<string, RouteStub>();
+  for (const a of actions) {
+    const contract = String(a.account ?? a.contract ?? "");
+    const action = String(a.name ?? a.action ?? "");
+    if (contract === "" || action === "") continue;
+    const key = `${contract}::${action}`;
+    if (!seen.has(key)) {
+      seen.set(key, { contract, action, paths: dataLeafPaths((a.data ?? {}) as Record<string, unknown>) });
+    }
+  }
+  return [...seen.values()];
+}
+
+/** Leaf paths under `data`, one level deep (so `quantity` → amount/symbol), capped. */
+function dataLeafPaths(data: Record<string, unknown>, prefix = "data", depth = 0): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(data)) {
+    if (out.length >= 6) break;
+    if (v === "") continue; // skip empty fields (e.g. an empty memo)
+    const path = `${prefix}.${k}`;
+    if (v !== null && typeof v === "object" && !Array.isArray(v) && depth < 1) {
+      out.push(...dataLeafPaths(v as Record<string, unknown>, path, depth + 1));
+    } else if (typeof v === "string" && isAssetString(v)) {
+      // "1.0000 XPR" → expose the amount/symbol you actually compare on.
+      out.push(`${path}.amount`, `${path}.symbol`);
+    } else {
+      out.push(path);
+    }
+  }
+  return out.slice(0, 6);
+}
+
+function isAssetString(s: string): boolean {
+  return /^\d+(\.\d+)?\s+[A-Z]{1,7}$/.test(s.trim());
+}

@@ -18,7 +18,8 @@ import { evaluateGraph } from "../editor/eval";
 import { compilePolicy, type CompileResult } from "../editor/compile";
 import { decompilePolicy } from "../editor/decompile";
 import { SAMPLES } from "../editor/samples";
-import { loadTestTxs, saveTestTx, txToSampleActions, TEST_CHAIN } from "../editor/testTx";
+import { loadTestTxs, saveTestTx, deleteTestTx, txToSampleActions, TEST_CHAIN } from "../editor/testTx";
+import { buildScaffold } from "../editor/scaffold";
 import { getPolicy } from "../chain/rpc";
 import { SIGNBOX_CONTRACT } from "../networks";
 import type { NodeType, SampleAction, TestTx } from "../editor/types";
@@ -127,7 +128,7 @@ interface LoadedPolicy {
 }
 
 function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => void }) {
-  const { state } = useGraph();
+  const { state, dispatch } = useGraph();
   const { chainId, network } = useNetwork();
   const [modal, setModal] = useState<CompileResult | null>(null);
   const [customTxs, setCustomTxs] = useState<TestTx[]>(() => loadTestTxs(network));
@@ -152,6 +153,18 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
     },
     [network],
   );
+
+  function onDeleteTest(name: string) {
+    deleteTestTx(name, network);
+    setCustomTxs(loadTestTxs(network));
+    setSelected((prev) => (prev === `custom:${name}` ? "builtin:0" : prev));
+  }
+
+  // Scaffold the routing branch(es) for a transaction into the current graph.
+  function onConvertToRoute(tx: unknown) {
+    const scaffold = buildScaffold(state, tx);
+    dispatch({ type: "add-scaffold", nodes: scaffold.nodes, wires: scaffold.wires, nextId: scaffold.nextId });
+  }
 
   function onCommit() {
     const compiled = compilePolicy(state.nodes, state.wires, chainId);
@@ -180,6 +193,8 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
         customTxs={customTxs}
         network={network}
         onSaveTest={onSaveTest}
+        onConvertToRoute={onConvertToRoute}
+        onDeleteTest={onDeleteTest}
       />
       {modal !== null && (
         <PushModal compiled={modal} preselect={loaded.agent} onClose={() => setModal(null)} />
