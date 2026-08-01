@@ -13,6 +13,7 @@ import { loadPayload } from "./link";
 import { AgentsView } from "./views/AgentsView";
 import { EditorView } from "./views/EditorView";
 import { Header } from "./components/Header";
+import { ConnectPortal } from "./components/ConnectModal";
 import { NetworkProvider } from "./context/NetworkContext";
 import { WalletProvider } from "./context/WalletContext";
 
@@ -44,6 +45,7 @@ export function App() {
       <WalletProvider>
         <div className="appshell">
           <Header onHome={() => setView({ name: "agents" })} />
+          <ConnectPortal />
           <div className="viewport">
             {view.name === "agents" ? (
               <AgentsView onEdit={(agent) => setView({ name: "editor", agent })} />

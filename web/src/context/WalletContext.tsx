@@ -10,7 +10,6 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { useNetwork } from "./NetworkContext";
 import { NETWORKS, SIGNBOX_CONTRACT, type NetworkName } from "../networks";
 import { connectNetwork, type Connected } from "../wallet";
-import { ConnectModal } from "../components/ConnectModal";
 
 interface WalletState {
   session: Connected | null;
@@ -68,7 +67,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       value={{ session, connecting, error, pickerOpen, openPicker, closePicker, connect, disconnect }}
     >
       {children}
-      {pickerOpen && session === null && <ConnectModal />}
     </WalletContext.Provider>
   );
 }

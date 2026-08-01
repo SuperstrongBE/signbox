@@ -11,7 +11,13 @@ const OPTIONS: { net: NetworkName; blurb: string }[] = [
   { net: "mainnet", blurb: "XPR mainnet — real funds" },
 ];
 
-export function ConnectModal() {
+/** Renders the picker only when open — mounted INSIDE the themed appshell. */
+export function ConnectPortal() {
+  const { pickerOpen, session } = useWallet();
+  return pickerOpen && session === null ? <ConnectModal /> : null;
+}
+
+function ConnectModal() {
   const { connect, connecting, error, closePicker } = useWallet();
   const busy = connecting !== null;
 
