@@ -35,29 +35,105 @@ export type SignboxResult =
   | { ok: true; status: "signed"; txid?: string; detail: unknown }
   | { ok: false; status: "denied" | "rejected" | "ambiguous" | "error"; reason: string; code?: string; detail?: unknown };
 
-/** Build a 1-action transfer, ask SignBox to sign AND submit it. */
-export async function signAndPush(cfg: SignboxConfig, input: TransferInput): Promise<SignboxResult> {
-  const tx = {
-    actions: [
-      {
-        account: "eosio.token",
-        name: "transfer",
-        authorization: [{ actor: cfg.agent, permission: "active" }],
-        data: { from: cfg.agent, to: input.to, quantity: input.amount, memo: input.memo ?? "" },
-      },
-    ],
-  };
+/** Fungible tokens the demo can send by symbol (contract + on-chain precision). */
+export interface TokenSpec {
+  contract: string;
+  symbol: string;
+  precision: number;
+}
 
+export const TOKENS: Record<string, TokenSpec> = {
+  XPR: { contract: "eosio.token", symbol: "XPR", precision: 4 },
+  XUSDC: { contract: "xtokens", symbol: "XUSDC", precision: 6 },
+};
+
+/** A standard `transfer` action, always authorized by (and from) the agent. */
+function transferAction(agent: string, contract: string, to: string, quantity: string, memo?: string): Record<string, unknown> {
+  return {
+    account: contract,
+    name: "transfer",
+    authorization: [{ actor: agent, permission: "active" }],
+    data: { from: agent, to, quantity, memo: memo ?? "" },
+  };
+}
+
+/** Coerce a loose amount ("10", "10.5 XUSDC") to the token's strict "10.000000 XUSDC". */
+function formatAsset(input: string, spec: TokenSpec): string {
+  const m = input.trim().match(/^([0-9]+(?:\.[0-9]+)?)/);
+  const value = m ? Number(m[1]) : NaN;
+  return `${(Number.isFinite(value) ? value : 0).toFixed(spec.precision)} ${spec.symbol}`;
+}
+
+/** Send XPR (shortcut for the common case). */
+export async function signAndPush(cfg: SignboxConfig, input: TransferInput): Promise<SignboxResult> {
+  const spec = TOKENS["XPR"] as TokenSpec;
+  return submit(cfg, [transferAction(cfg.agent, spec.contract, input.to, formatAsset(input.amount, spec), input.memo)]);
+}
+
+/** Send any known fungible token by symbol (resolves its contract + precision). */
+export async function sendToken(
+  cfg: SignboxConfig,
+  input: { to: string; amount: string; symbol: string; memo?: string },
+): Promise<SignboxResult> {
+  const spec = TOKENS[input.symbol.toUpperCase()];
+  if (spec === undefined) {
+    return {
+      ok: false,
+      status: "error",
+      reason: `unknown token "${input.symbol}" — known: ${Object.keys(TOKENS).join(", ")}. For anything else, build the action yourself and use submit_transaction (discover its shape with chain_query get_abi).`,
+    };
+  }
+  return submit(cfg, [transferAction(cfg.agent, spec.contract, input.to, formatAsset(input.amount, spec), input.memo)]);
+}
+
+/**
+ * Submit an ARBITRARY transaction: a raw list of actions. This is the honest
+ * black-box surface — the agent may TRY anything, and SignBox's on-chain policy
+ * is what actually decides. Authorization is forced to the agent, since the
+ * daemon can only ever sign as this agent.
+ */
+export async function submitTransaction(cfg: SignboxConfig, raw: unknown): Promise<SignboxResult> {
+  const actions = normalizeActions(cfg.agent, raw);
+  if (actions === null || actions.length === 0) {
+    return { ok: false, status: "error", reason: "submit_transaction needs a non-empty `actions` array of { account, name, data }." };
+  }
+  return submit(cfg, actions);
+}
+
+/** Accept {actions:[…]} | […] | a single action; force authorization to the agent. */
+function normalizeActions(agent: string, raw: unknown): Array<Record<string, unknown>> | null {
+  const list: unknown[] | null = Array.isArray(raw)
+    ? raw
+    : isRecord(raw) && Array.isArray(raw["actions"])
+      ? (raw["actions"] as unknown[])
+      : isRecord(raw) && typeof raw["account"] === "string"
+        ? [raw]
+        : null;
+  if (list === null) return null;
+  const out: Array<Record<string, unknown>> = [];
+  for (const a of list) {
+    if (!isRecord(a) || typeof a["account"] !== "string" || typeof a["name"] !== "string") return null;
+    out.push({
+      account: a["account"],
+      name: a["name"],
+      authorization: [{ actor: agent, permission: "active" }],
+      data: isRecord(a["data"]) ? a["data"] : {},
+    });
+  }
+  return out;
+}
+
+/** Write the raw tx, ask SignBox to sign AND submit it, map the structured result. */
+async function submit(cfg: SignboxConfig, actions: Array<Record<string, unknown>>): Promise<SignboxResult> {
   const file = join(tmpdir(), `sbx-tx-${randomUUID()}.json`);
-  await writeFile(file, JSON.stringify(tx), "utf8");
+  await writeFile(file, JSON.stringify({ actions }), "utf8");
   const args = ["transaction", "sign", "--agent", cfg.agent, "--transaction", file, "--push"];
   if (cfg.configPath) args.push("--config", cfg.configPath);
 
   try {
     const { stdout, stderr, code, spawnError } = await run(cfg.bin, args);
-    console.log(
-      `[signbox] ${input.amount} -> ${input.to} | exit=${code} | ${stdout.trim() || stderr.trim() || "(no output)"}`,
-    );
+    const summary = actions.map((a) => `${String(a["account"])}::${String(a["name"])}`).join(", ");
+    console.log(`[signbox] ${summary} | exit=${code} | ${stdout.trim() || stderr.trim() || "(no output)"}`);
     if (spawnError === "ENOENT") {
       return {
         ok: false,
