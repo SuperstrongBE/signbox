@@ -31,6 +31,12 @@ export interface CompileResult {
   warnings: string[];
 }
 
+// The daemon's closed vocabularies (schema.ts) — validate custom paths here so
+// the editor never pushes a policy the daemon would reject as schema_invalid.
+const MATCH_PATH_RE =
+  /^(contract|action|authorization\.(actor|permission)|data\.[a-zA-Z0-9_]{1,64}(\.[a-zA-Z0-9_]{1,64}){0,4})$/;
+const SELECT_FIELD_RE = /^[a-zA-Z0-9_]{1,64}$/;
+
 function listOf(s: string): string[] {
   return s.split(",").map((x) => x.trim()).filter(Boolean);
 }
@@ -44,8 +50,9 @@ function slug(parts: string[]): string {
     .slice(0, 40) || "rule";
 }
 
-function compileRule(nodes: GraphNode[], wires: Wire[], decision: GraphNode): { rule: CompiledRule; warnings: string[] } {
+function compileRule(nodes: GraphNode[], wires: Wire[], decision: GraphNode): { rule: CompiledRule; warnings: string[]; drop: boolean } {
   const warnings: string[] = [];
+  let drop = false;
   const up = [...upstream(wires, decision.id)]
     .map((id) => nodes.find((n) => n.id === id))
     .filter((n): n is GraphNode => n !== undefined);
@@ -64,8 +71,11 @@ function compileRule(nodes: GraphNode[], wires: Wire[], decision: GraphNode): { 
         const op = String(f["op"]);
         const value = String(f["value"]);
         const path = String(src.fields["path"]);
-        // Bounded declarative forms only.
-        if (op === "eq") match[path] = value;
+        // Bounded declarative forms + a valid daemon match path only.
+        if (!MATCH_PATH_RE.test(path)) {
+          warnings.push(`Match path “${path}” isn’t a valid field (contract, action, or data.<field>) → rule omitted`);
+          drop = true;
+        } else if (op === "eq") match[path] = value;
         else if (op === "lte") match[path] = { lte: value };
         else if (op === "gte") match[path] = { gte: value };
         else warnings.push(`Compare “${op}” has no bounded declarative form → rejected`);
@@ -76,24 +86,35 @@ function compileRule(nodes: GraphNode[], wires: Wire[], decision: GraphNode): { 
       const src = inboundNodes(nodes, wires, n.id, "a")[0];
       if (src !== undefined && src.type === "getfield") {
         const path = String(src.fields["path"]);
-        match[path] = f["mode"] === "notin" ? { notIn: listOf(String(f["list"])) } : { in: listOf(String(f["list"])) };
+        if (!MATCH_PATH_RE.test(path)) {
+          warnings.push(`Match path “${path}” isn’t a valid field (contract, action, or data.<field>) → rule omitted`);
+          drop = true;
+        } else {
+          match[path] = f["mode"] === "notin" ? { notIn: listOf(String(f["list"])) } : { in: listOf(String(f["list"])) };
+        }
       }
     } else if (n.type === "contains") {
       const gf = inboundNodes(nodes, wires, n.id, "a")[0];
       const lk = gf !== undefined && gf.type === "getfield" ? inboundNodes(nodes, wires, gf.id, "in")[0] : undefined;
       if (lk !== undefined && lk.type === "lookup" && gf !== undefined) {
-        providers.push({
-          provider: "xpr.rpc.tableRow",
-          args: {
-            contract: String(lk.fields["contract"]),
-            scope: String(lk.fields["contract"]),
-            table: String(lk.fields["table"]),
-            key: String(lk.fields["key"]),
-          },
-          select: String(gf.fields["path"]),
-          op: "contains",
-          value: String(f["value"]),
-        });
+        const select = String(gf.fields["path"]);
+        if (!SELECT_FIELD_RE.test(select)) {
+          warnings.push(`Lookup field “${select}” isn’t a valid row field name → rule omitted`);
+          drop = true;
+        } else {
+          providers.push({
+            provider: "xpr.rpc.tableRow",
+            args: {
+              contract: String(lk.fields["contract"]),
+              scope: String(lk.fields["contract"]),
+              table: String(lk.fields["table"]),
+              key: String(lk.fields["key"]),
+            },
+            select,
+            op: "contains",
+            value: String(f["value"]),
+          });
+        }
       } else {
         warnings.push("Contains not fed by Lookup → Get Field → rejected");
       }
@@ -121,7 +142,7 @@ function compileRule(nodes: GraphNode[], wires: Wire[], decision: GraphNode): { 
     if (Object.keys(limits).length > 0) rule.limits = limits;
   }
   if (providers.length > 0) rule.providers = providers;
-  return { rule, warnings };
+  return { rule, warnings, drop };
 }
 
 export function compilePolicy(nodes: GraphNode[], wires: Wire[], chainId: string): CompileResult | null {
@@ -135,6 +156,9 @@ export function compilePolicy(nodes: GraphNode[], wires: Wire[], chainId: string
   for (const dn of decisions) {
     const compiled = compileRule(nodes, wires, dn);
     warnings.push(...compiled.warnings);
+    // Drop a rule the daemon would reject (invalid custom path/field) — the
+    // warning naming it was already emitted in compileRule.
+    if (compiled.drop) continue;
     // A rule whose `match` ends up empty would apply to EVERY action — the
     // daemon's schema rejects it (match needs ≥1 property) and it is unsafe
     // anyway. Omit it (safe: removing a match-everything rule only narrows the

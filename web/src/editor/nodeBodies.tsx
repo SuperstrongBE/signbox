@@ -50,6 +50,18 @@ export function NodeBody({ node }: { node: GraphNode }) {
       {label}
     </label>
   );
+  // Free-text input with preset suggestions — type a custom path or pick one.
+  const combo = (key: string, options: string[], placeholder?: string) => {
+    const listId = `dl-${node.id}-${key}`;
+    return (
+      <>
+        <input list={listId} value={String(f[key] ?? "")} placeholder={placeholder} onChange={set(key)} onPointerDown={stop} />
+        <datalist id={listId}>
+          {options.map((o) => (<option key={o} value={o} />))}
+        </datalist>
+      </>
+    );
+  };
 
   switch (node.type) {
     case "transaction":
@@ -63,8 +75,8 @@ export function NodeBody({ node }: { node: GraphNode }) {
       );
     case "getfield":
       return (
-        <Field label="field path">
-          {select("path", ["contract", "action", "data.from", "data.to", "data.quantity.amount", "data.quantity.symbol", "allowed", "tier"])}
+        <Field label="field path (custom)">
+          {combo("path", ["contract", "action", "data.from", "data.to", "data.quantity.amount", "data.quantity.symbol", "data.memo", "allowed", "tier"], "data.your_field")}
         </Field>
       );
     case "constant":

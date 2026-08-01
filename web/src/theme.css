@@ -248,6 +248,7 @@
 .ttjson::placeholder { color: #3a4356; }
 .txbox .a { color: var(--tx); font-weight: 600; }
 .txbox .m { color: var(--mut2); }
+.lookupbusy { color: var(--mut2); font-weight: 400; letter-spacing: 0; text-transform: none; }
 .trace { display: flex; flex-direction: column; gap: 8px; }
 .tracecard { border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; background: var(--panel2); }
 .tracecard.win { border-color: var(--wc, var(--deny)); }
