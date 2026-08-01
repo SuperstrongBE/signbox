@@ -112,7 +112,9 @@
 .backbtn:hover { border-color: var(--accent); color: var(--accent); }
 .ebsep { width: 1px; height: 16px; background: var(--line2); }
 
-.viewport { flex: 1; min-height: 0; position: relative; }
+.appmain { flex: 1; min-height: 0; position: relative; }
+.appshell.tool .appmain { overflow: hidden; }
+.appshell.site .appmain { overflow-y: auto; }
 
 /* ---------- agents view ---------- */
 .agents { height: 100%; overflow: auto; padding: 26px clamp(16px, 4vw, 44px); }
@@ -302,6 +304,83 @@
 .modal .mf { display: flex; gap: 10px; padding: 14px 16px; border-top: 1px solid var(--line); background: #0e1118; }
 .modal .mf .ghostbtn { flex: none; padding: 9px 14px; }
 .modal .mf .pushbtn { flex: 1; width: auto; }
+
+/* ---------- primary nav ---------- */
+.topnav { display: flex; gap: 2px; margin-left: 4px; }
+.navlink { color: var(--mut); padding: 7px 12px; font-weight: 550; font-size: 13px; text-decoration: none; border-bottom: 2px solid transparent; }
+.navlink:hover { color: var(--ink); }
+.navlink.active { color: var(--ink); border-bottom-color: var(--accent); }
+
+/* ---------- content pages (landing / getting-started) ---------- */
+.page { max-width: 1000px; margin: 0 auto; padding: 40px clamp(18px, 5vw, 40px) 72px; }
+.page a { color: var(--accent); text-decoration: none; }
+.page a:hover { text-decoration: underline; }
+.page code { font-family: var(--monoxs); font-size: 0.88em; color: var(--ink); background: #0c0e14; border: 1px solid var(--line); padding: 1px 5px; }
+.herobadge { display: inline-block; font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line2)); padding: 4px 10px; margin-bottom: 20px; }
+
+.hero, .gshead { display: flex; flex-direction: column; align-items: flex-start; }
+.hero { padding: 30px 0 40px; border-bottom: 1px solid var(--line); }
+.hero h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.03; letter-spacing: -1.2px; font-weight: 720; margin: 0 0 20px; text-wrap: balance; }
+.hero .hl { background: linear-gradient(100deg, var(--accent), var(--val)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lede { font-size: clamp(15px, 2.2vw, 18px); color: var(--mut); max-width: 62ch; line-height: 1.6; margin: 0 0 26px; }
+.lede em { color: var(--ink); font-style: normal; font-weight: 600; }
+.herocta { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; padding: 11px 20px; font-weight: 600; font-size: 14px; text-decoration: none !important; border: 1px solid var(--line2); }
+.btn.primary { background: var(--accent); color: #05231d; border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.ghost { background: transparent; color: var(--ink); }
+.btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+.band { padding: 44px 0; border-bottom: 1px solid var(--line); }
+.bandhead h2 { font-size: clamp(22px, 3.5vw, 30px); letter-spacing: -0.5px; margin: 0 0 12px; font-weight: 680; text-wrap: balance; }
+.bandhead p { color: var(--mut); max-width: 64ch; line-height: 1.6; margin: 0 0 24px; }
+
+.blackbox { display: grid; grid-template-columns: 1fr auto 1.1fr auto 1fr; align-items: center; gap: 14px; }
+.blackbox .bbcol, .blackbox .bbcore { display: flex; flex-direction: column; gap: 7px; padding: 16px; border: 1px solid var(--line2); background: var(--panel); }
+.blackbox .bbcore { align-items: center; text-align: center; border-color: var(--accent); box-shadow: 0 0 40px -18px var(--accent); }
+.blackbox .bbcore .brandmark { width: 26px; height: 26px; }
+.blackbox .bbcore b { font-size: 16px; }
+.bblabel { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--mut2); }
+.blackbox code { display: inline-block; background: #0c0e14; }
+.blackbox code.ok { color: var(--allow); border-color: color-mix(in srgb, var(--allow) 40%, var(--line2)); }
+.blackbox code.no { color: var(--deny); border-color: color-mix(in srgb, var(--deny) 40%, var(--line2)); }
+.bbnote { font-size: 11px; color: var(--mut2); line-height: 1.4; }
+.bbarrow { color: var(--mut2); font-size: 20px; text-align: center; }
+@media (max-width: 760px) { .blackbox { grid-template-columns: 1fr; } .bbarrow { transform: rotate(90deg); } }
+
+.flow { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.flowstep, .gsstep { display: flex; gap: 16px; padding: 20px; background: var(--panel); border: 1px solid var(--line); }
+.flowstep + .flowstep { border-top: 0; }
+.flown { font-family: var(--monoxs); font-size: 13px; font-weight: 700; color: var(--accent); flex: none; padding-top: 2px; letter-spacing: 1px; }
+.flowstep h3, .propcard h3, .gsbody h3 { margin: 0 0 6px; font-size: 16px; font-weight: 640; }
+.flowstep p, .propcard p { margin: 0; color: var(--mut); line-height: 1.55; font-size: 14px; }
+
+.propgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+.propcard { padding: 20px; background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--accent); }
+
+.cta { text-align: center; padding: 56px 0 8px; }
+.cta h2 { font-size: clamp(22px, 3.5vw, 30px); letter-spacing: -0.5px; margin: 0 0 22px; font-weight: 680; text-wrap: balance; }
+.cta .herocta { justify-content: center; }
+
+/* ---------- getting started ---------- */
+.gshead { padding: 20px 0 34px; border-bottom: 1px solid var(--line); }
+.gshead h1 { font-size: clamp(28px, 5vw, 42px); letter-spacing: -0.8px; margin: 0 0 16px; font-weight: 700; text-wrap: balance; }
+.gssteps { list-style: none; margin: 34px 0 0; padding: 0; display: grid; gap: 16px; }
+.gsstep { align-items: flex-start; }
+.gsbody { flex: 1; min-width: 0; }
+.gsbody > p { color: var(--mut); line-height: 1.6; margin: 0 0 12px; }
+.gscmd { margin: 0; padding: 13px 15px; background: #0a0c11; border: 1px solid var(--line2); color: #cdd5e6; font-size: 12.5px; line-height: 1.6; overflow-x: auto; white-space: pre; }
+.gsnote { font-size: 12.5px; color: var(--mut2); margin: 10px 0 0; }
+
+/* ---------- footer ---------- */
+.sitefoot { flex: none; border-top: 1px solid var(--line); background: #0b0d12; }
+.footinner { max-width: 1000px; margin: 0 auto; padding: 20px clamp(18px, 5vw, 40px); display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.footbrand { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; color: var(--ink); text-decoration: none; }
+.footbrand .brandmark { width: 18px; height: 18px; }
+.footmut { color: var(--mut2); font-size: 12.5px; flex: 1; min-width: 200px; }
+.footnav { display: flex; gap: 18px; }
+.footnav a { color: var(--mut); font-size: 13px; text-decoration: none; }
+.footnav a:hover { color: var(--accent); }
 
 /* ---------- squared aesthetic: no rounded rectangles, only round indicators ---------- */
 .appshell *, .appshell *::before, .appshell *::after { border-radius: 0 !important; }

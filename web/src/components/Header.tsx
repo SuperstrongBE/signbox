@@ -1,22 +1,35 @@
 /**
- * App header: brand (→ home) and the wallet state. The network is chosen when
- * connecting, so there's no free network toggle here — the connected network
- * is shown in the wallet chip.
+ * App header: brand (→ home), primary nav, and the wallet state. The network is
+ * chosen when connecting, so there's no free network toggle here — the
+ * connected network is shown in the wallet chip.
  */
 
 import { useNetwork } from "../context/NetworkContext";
 import { useWallet } from "../context/WalletContext";
+import { Link, useRoute } from "../router";
 
-export function Header({ onHome }: { onHome: () => void }) {
+export function Header() {
+  const route = useRoute();
   const { network } = useNetwork();
   const { session, connecting, openPicker, disconnect } = useWallet();
+  const agentsActive = route.name === "agents" || route.name === "editor";
 
   return (
     <header className="topbar">
-      <button className="brand brandbtn" onClick={onHome} aria-label="home">
+      <Link to="/" className="brand brandbtn" aria-label="home">
         <span className="brandmark" aria-hidden="true" />
-        SignBox <small>companion</small>
-      </button>
+        SignBox <small>agent wallet</small>
+      </Link>
+
+      <nav className="topnav">
+        <Link to="/getting-started" className={`navlink ${route.name === "getting-started" ? "active" : ""}`}>
+          Getting started
+        </Link>
+        <Link to="/my-agents" className={`navlink ${agentsActive ? "active" : ""}`}>
+          My agents
+        </Link>
+      </nav>
+
       <div className="topspacer" />
 
       {session === null ? (
