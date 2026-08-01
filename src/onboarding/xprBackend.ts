@@ -123,10 +123,8 @@ export class XprOnboardingBackend implements OnboardingBackend {
     emptyPolicyJson: string;
     emptyPolicyHash: string;
   }): Promise<BuiltRequest> {
-    // The new agent account's owner is the authority's own public key, so
-    // resolve it from chain (create mode only needs it).
-    const authorityPublicKey =
-      args.input.mode === "create" ? await this.resolveActiveKey(args.input.authority) : "";
+    // The new agent account's owner is the authority's own public key.
+    const authorityPublicKey = await this.resolveActiveKey(args.input.authority);
 
     const actions = buildOnboardingActions({
       authority: args.input.authority,
@@ -134,7 +132,6 @@ export class XprOnboardingBackend implements OnboardingBackend {
       permission: args.input.permission,
       agentPublicKey: args.agentPublicKey,
       authorityPublicKey,
-      mode: args.input.mode,
       signboxContract: this.opts.signboxContract,
       emptyPolicyJson: args.emptyPolicyJson,
       emptyPolicyHash: args.emptyPolicyHash,
@@ -176,7 +173,6 @@ export class XprOnboardingBackend implements OnboardingBackend {
         authority: args.input.authority,
         permission: args.input.permission,
         publicKey: args.agentPublicKey,
-        mode: args.input.mode,
       },
       actions,
     };

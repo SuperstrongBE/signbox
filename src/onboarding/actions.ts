@@ -37,7 +37,6 @@ export interface BuildActionsInput {
   agentPublicKey: string;
   /** The authority's public key (resolved from chain), used as the agent's owner. */
   authorityPublicKey: string;
-  mode: "create" | "existing";
   signboxContract: string;
   emptyPolicyJson: string;
   emptyPolicyHash: string;
@@ -58,32 +57,30 @@ export function buildOnboardingActions(input: BuildActionsInput): OnboardingActi
   const actions: OnboardingAction[] = [];
   const byAuthority: Authorization[] = [{ actor: input.authority, permission: "active" }];
 
-  if (input.mode === "create") {
-    // Create the agent account with:
-    //   owner  = the authority's public key (they keep ultimate control),
-    //   active = the agent's generated key (what the SignBox daemon signs with).
-    // Putting the agent key directly on `active` avoids a separate dedicated
-    // permission via updateauth, which XPR blacklists in signing requests.
+  // Create the agent account with:
+  //   owner  = the authority's public key (they keep ultimate control),
+  //   active = the agent's generated key (what the SignBox daemon signs with).
+  // Putting the agent key directly on `active` avoids a separate dedicated
+  // permission via updateauth, which XPR blacklists in signing requests.
+  actions.push({
+    account: "eosio",
+    name: "newaccount",
+    authorization: byAuthority,
+    data: {
+      creator: input.authority,
+      name: input.agent,
+      owner: keyAuthority(input.authorityPublicKey),
+      active: keyAuthority(input.agentPublicKey),
+    },
+  });
+
+  if ((input.ramBytes ?? 0) > 0) {
     actions.push({
       account: "eosio",
-      name: "newaccount",
+      name: "buyrambytes",
       authorization: byAuthority,
-      data: {
-        creator: input.authority,
-        name: input.agent,
-        owner: keyAuthority(input.authorityPublicKey),
-        active: keyAuthority(input.agentPublicKey),
-      },
+      data: { payer: input.authority, receiver: input.agent, bytes: input.ramBytes },
     });
-
-    if ((input.ramBytes ?? 0) > 0) {
-      actions.push({
-        account: "eosio",
-        name: "buyrambytes",
-        authorization: byAuthority,
-        data: { payer: input.authority, receiver: input.agent, bytes: input.ramBytes },
-      });
-    }
   }
 
   // TEMPORARILY DISABLED: XPR Network currently blacklists `eosio::updateauth`

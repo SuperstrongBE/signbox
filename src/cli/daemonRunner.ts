@@ -28,7 +28,7 @@ import { XprTransactionSigner } from "../chains/xpr/adapter.js";
 import { decodeXprTransaction } from "../chains/xpr/decode.js";
 import { openKeystoreFile, wipeSecret } from "../keystore/encryptedFile.js";
 import { emptyPolicy } from "../core/policy/schema.js";
-import { ValidationError } from "../core/errors.js";
+import { ValidationError, KeystoreError } from "../core/errors.js";
 import { chainContextOf, type SignBoxConfig } from "./config.js";
 import type { PolicyReader } from "../daemon/chainPolicyReader.js";
 import type { KeyHandle, TransactionSigner } from "../core/types.js";
@@ -59,8 +59,8 @@ export function discoverKeystores(keystoreDir: string): string[] {
 
 export async function startDaemonFromConfig(
   config: SignBoxConfig,
-  /** Prompts for a keystore's passphrase, keyed by its file label. */
-  passphraseFor: (keystoreLabel: string) => Promise<Buffer>,
+  /** Prompts for a keystore's passphrase (attempt starts at 1, bumped on retry). */
+  passphraseFor: (keystoreLabel: string, attempt: number) => Promise<Buffer>,
   overrides: DaemonRunnerOverrides = {},
 ): Promise<RunningDaemon> {
   const context = chainContextOf(config);
@@ -112,14 +112,28 @@ export async function startDaemonFromConfig(
   try {
     mkdirSync(config.tokenDir, { recursive: true });
 
+    const MAX_PASSPHRASE_ATTEMPTS = 3;
     for (const keystorePath of discoverKeystores(config.keystoreDir)) {
       const label = keystorePath.split("/").pop() ?? keystorePath;
-      const passphrase = await passphraseFor(label);
-      let opened;
-      try {
-        opened = openKeystoreFile(keystorePath, passphrase);
-      } finally {
-        passphrase.fill(0);
+      // A wrong passphrase is a typo, not a fatal error — retry a few times
+      // before giving up, so one fumble doesn't abort a multi-keystore start.
+      let opened: ReturnType<typeof openKeystoreFile> | undefined;
+      for (let attempt = 1; opened === undefined; attempt++) {
+        const passphrase = await passphraseFor(label, attempt);
+        try {
+          opened = openKeystoreFile(keystorePath, passphrase);
+        } catch (error) {
+          if (
+            error instanceof KeystoreError &&
+            error.code === "DECRYPT_FAILED" &&
+            attempt < MAX_PASSPHRASE_ATTEMPTS
+          ) {
+            continue; // re-prompt
+          }
+          throw error;
+        } finally {
+          passphrase.fill(0);
+        }
       }
 
       const meta = opened.meta;
