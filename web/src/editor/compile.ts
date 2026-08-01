@@ -96,7 +96,12 @@ function compileRule(nodes: GraphNode[], wires: Wire[], decision: GraphNode): { 
     } else if (n.type === "contains") {
       const gf = inboundNodes(nodes, wires, n.id, "a")[0];
       const lk = gf !== undefined && gf.type === "getfield" ? inboundNodes(nodes, wires, gf.id, "in")[0] : undefined;
-      if (lk !== undefined && lk.type === "lookup" && gf !== undefined) {
+      if (lk !== undefined && lk.type === "lookup" && lk.fields["mode"] === "http") {
+        // Generic HTTP lookups are test-only: non-deterministic, not a daemon
+        // provider. Never let one into the pushed policy.
+        warnings.push("HTTP lookup is test-only and can’t be enforced by the daemon → rule omitted");
+        drop = true;
+      } else if (lk !== undefined && lk.type === "lookup" && gf !== undefined) {
         const select = String(gf.fields["path"]);
         if (!SELECT_FIELD_RE.test(select)) {
           warnings.push(`Lookup field “${select}” isn’t a valid row field name → rule omitted`);

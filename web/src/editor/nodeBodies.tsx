@@ -105,12 +105,23 @@ export function NodeBody({ node }: { node: GraphNode }) {
     case "lookup":
       return (
         <>
-          <div className="grow2">
-            <Field label="contract">{text("contract")}</Field>
-            <Field label="table">{text("table")}</Field>
-          </div>
-          <Field label="key">{text("key", "$agent")}</Field>
-          <div className="gempty">provider: {String(f["provider"])}</div>
+          <Field label="source">{select("mode", ["table", "http"])}</Field>
+          {f["mode"] === "http" ? (
+            <>
+              <Field label="url">{text("url", "https://api.example.com/…")}</Field>
+              <Field label="json path">{text("httpPath", "data.0.value")}</Field>
+              <div className="glimbadge">⚠ HTTP · test-only · NOT enforced by the daemon (omitted from the pushed policy)</div>
+            </>
+          ) : (
+            <>
+              <div className="grow2">
+                <Field label="contract">{text("contract")}</Field>
+                <Field label="table">{text("table")}</Field>
+              </div>
+              <Field label="key">{text("key", "$agent")}</Field>
+              <div className="gempty">provider: xpr.rpc.tableRow · enforced on-chain</div>
+            </>
+          )}
         </>
       );
     case "decision":

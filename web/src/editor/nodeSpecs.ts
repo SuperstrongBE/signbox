@@ -110,7 +110,7 @@ export const SPECS: Record<NodeType, NodeSpec> = {
       { side: "in", key: "tx", label: "tx", type: "tx" },
       { side: "out", key: "out", label: "→ json", type: "val" },
     ],
-    defaults: () => ({ provider: "xpr.rpc.tableRow", contract: "whitelister", table: "lists", key: "$agent" }),
+    defaults: () => ({ provider: "xpr.rpc.tableRow", mode: "table", contract: "whitelister", table: "lists", key: "$agent", url: "", httpPath: "" }),
   },
   decision: {
     title: "Decision",
