@@ -30,6 +30,7 @@ export type GraphAction =
   | { type: "delete-node"; id: number }
   | { type: "set-field"; id: number; key: string; value: string | boolean }
   | { type: "add-wire"; from: { node: number; key: string }; to: { node: number; key: string } }
+  | { type: "delete-wire"; wire: Wire }
   | { type: "add-scaffold"; nodes: GraphNode[]; wires: Wire[]; nextId: number }
   | { type: "select"; id: number | null }
   | { type: "set-view"; view: ViewTransform }
@@ -90,6 +91,21 @@ function reducer(state: GraphState, action: GraphAction): GraphState {
       };
     case "add-wire":
       return addWire(state, action.from, action.to);
+    case "delete-wire": {
+      const w = action.wire;
+      return {
+        ...state,
+        wires: state.wires.filter(
+          (x) =>
+            !(
+              x.from.node === w.from.node &&
+              x.from.key === w.from.key &&
+              x.to.node === w.to.node &&
+              x.to.key === w.to.key
+            ),
+        ),
+      };
+    }
     case "add-scaffold":
       if (action.nodes.length === 0) return state;
       return {

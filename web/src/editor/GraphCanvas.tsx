@@ -198,7 +198,14 @@ export function GraphCanvas({ evaluation }: { evaluation: Evaluation }) {
         className="world"
         style={{ transform: `translate(${state.view.x}px, ${state.view.y}px) scale(${state.view.z})` }}
       >
-        <Wires nodes={state.nodes} wires={state.wires} hotWires={evaluation.hotWires} hotColor={hotColor} temp={temp} />
+        <Wires
+          nodes={state.nodes}
+          wires={state.wires}
+          hotWires={evaluation.hotWires}
+          hotColor={hotColor}
+          temp={temp}
+          onDeleteWire={(wire) => dispatch({ type: "delete-wire", wire })}
+        />
         {state.nodes.map((node) => (
           <GraphNodeView
             key={node.id}
