@@ -113,7 +113,7 @@ interface LoadedPolicy {
   warnings: string[];
 }
 
-function EditorInner({ loaded }: { loaded: LoadedPolicy | null }) {
+function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => void }) {
   const { state } = useGraph();
   const { chainId, network } = useNetwork();
   const [modal, setModal] = useState<CompileResult | null>(null);
@@ -131,21 +131,21 @@ function EditorInner({ loaded }: { loaded: LoadedPolicy | null }) {
 
   return (
     <div className="editor">
-      {loaded !== null && (
-        <div className="editbanner">
-          Editing <b className="mono">{loaded.agent}</b> · v{loaded.version} loaded from {network}
-          {loaded.warnings.length > 0 && (
-            <span className="ebwarn" title={loaded.warnings.join("\n")}>
-              ⚠ {loaded.warnings.length} construct{loaded.warnings.length > 1 ? "s" : ""} not shown
-            </span>
-          )}
-        </div>
-      )}
+      <div className="editbanner">
+        <button className="backbtn" onClick={onBack}>← Agents</button>
+        <span className="ebsep" />
+        Editing <b className="mono">{loaded.agent}</b> · v{loaded.version} on {network}
+        {loaded.warnings.length > 0 && (
+          <span className="ebwarn" title={loaded.warnings.join("\n")}>
+            ⚠ {loaded.warnings.length} construct{loaded.warnings.length > 1 ? "s" : ""} not shown
+          </span>
+        )}
+      </div>
       <Palette />
       <GraphCanvas evaluation={evaluation} />
       <Inspector evaluation={evaluation} onCommit={onCommit} />
       {modal !== null && (
-        <PushModal compiled={modal} preselect={loaded?.agent ?? null} onClose={() => setModal(null)} />
+        <PushModal compiled={modal} preselect={loaded.agent} onClose={() => setModal(null)} />
       )}
     </div>
   );
@@ -154,16 +154,13 @@ function EditorInner({ loaded }: { loaded: LoadedPolicy | null }) {
 type LoadState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
-  | { kind: "ready"; initial: GraphState | undefined; loaded: LoadedPolicy | null };
+  | { kind: "ready"; initial: GraphState; loaded: LoadedPolicy };
 
-export function EditorView({ agent }: { agent: string | null }) {
+export function EditorView({ agent, onBack }: { agent: string; onBack: () => void }) {
   const { network, endpoints } = useNetwork();
-  const [load, setLoad] = useState<LoadState>(
-    agent === null ? { kind: "ready", initial: undefined, loaded: null } : { kind: "loading" },
-  );
+  const [load, setLoad] = useState<LoadState>({ kind: "loading" });
 
   useEffect(() => {
-    if (agent === null) return;
     let alive = true;
     setLoad({ kind: "loading" });
     void (async () => {
@@ -189,7 +186,10 @@ export function EditorView({ agent }: { agent: string | null }) {
   if (load.kind === "loading") {
     return (
       <div className="editor">
-        <div className="editstate">Loading <b className="mono">{agent}</b>&apos;s policy from {network}…</div>
+        <div className="editstate">
+          <div><button className="backbtn" onClick={onBack}>← Agents</button></div>
+          Loading <b className="mono">{agent}</b>&apos;s policy from {network}…
+        </div>
       </div>
     );
   }
@@ -197,6 +197,7 @@ export function EditorView({ agent }: { agent: string | null }) {
     return (
       <div className="editor">
         <div className="editstate error">
+          <div><button className="backbtn" onClick={onBack}>← Agents</button></div>
           Could not load the policy: {load.message}
         </div>
       </div>
@@ -204,7 +205,7 @@ export function EditorView({ agent }: { agent: string | null }) {
   }
   return (
     <GraphProvider initial={load.initial}>
-      <EditorInner loaded={load.loaded} />
+      <EditorInner loaded={load.loaded} onBack={onBack} />
     </GraphProvider>
   );
 }

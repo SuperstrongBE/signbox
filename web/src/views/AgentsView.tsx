@@ -1,11 +1,12 @@
 /**
- * My Agents — real on-chain data: the SignBox contract's `policies` table on
- * the currently selected network (read-only fetch, no SDK). Switching the
- * header selector re-queries automatically.
+ * My Agents — the agents the CONNECTED authority controls. Empty until you
+ * connect a wallet; then it lists the SignBox contract rows whose `authority`
+ * is the connected account, read live from the selected network.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { useNetwork } from "../context/NetworkContext";
+import { useWallet } from "../context/WalletContext";
 import { SIGNBOX_CONTRACT } from "../networks";
 import { listPolicies, type PolicyRow } from "../chain/rpc";
 
@@ -16,29 +17,52 @@ type State =
 
 export function AgentsView({ onEdit }: { onEdit: (agent: string) => void }) {
   const { network, endpoints, explorer } = useNetwork();
+  const { session, connecting, connect, error } = useWallet();
   const [state, setState] = useState<State>({ kind: "loading" });
 
+  const authority = session?.actor ?? null;
+
   const load = useCallback(async () => {
+    if (authority === null) return;
     setState({ kind: "loading" });
     try {
       const rows = await listPolicies(endpoints, SIGNBOX_CONTRACT);
-      setState({ kind: "ready", rows });
-    } catch (error) {
-      setState({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+      setState({ kind: "ready", rows: rows.filter((r) => r.authority === authority) });
+    } catch (err) {
+      setState({ kind: "error", message: err instanceof Error ? err.message : String(err) });
     }
-  }, [endpoints]);
+  }, [endpoints, authority]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  // Not connected → gate everything behind a connect prompt.
+  if (authority === null) {
+    return (
+      <section className="agents">
+        <div className="gate">
+          <div className="gatemark" aria-hidden="true" />
+          <h1>Connect your wallet</h1>
+          <p>
+            SignBox shows the agents <b>you</b> control. Connect the authority account on{" "}
+            <code>{network}</code> to see and edit their policies.
+          </p>
+          <button className="pushbtn gatebtn" onClick={() => void connect()} disabled={connecting}>
+            {connecting ? "Opening wallet…" : `Connect ${network} wallet`}
+          </button>
+          {error !== null && <div className="gateerr">⚠ {error}</div>}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="agents">
-      <h1>Agents</h1>
+      <h1>Your agents</h1>
       <p className="sub">
-        Rows of the <code>{SIGNBOX_CONTRACT}</code> contract&apos;s policy table on{" "}
-        <code>{network}</code>. The key never leaves each agent&apos;s daemon — what you manage
-        here is the policy, not the secret.
+        Agents controlled by <code>{authority}</code> on <code>{network}</code>. The key never leaves each
+        agent&apos;s daemon — what you manage here is the policy, not the secret.
       </p>
 
       {state.kind === "loading" && <div className="state">Reading the {network} chain…</div>}
@@ -52,7 +76,8 @@ export function AgentsView({ onEdit }: { onEdit: (agent: string) => void }) {
 
       {state.kind === "ready" && state.rows.length === 0 && (
         <div className="state">
-          No agent registered on {network} yet. Onboard one with <code className="mono">signbox agent create</code>.
+          No agent is controlled by <code className="mono">{authority}</code> on {network} yet. Onboard one with{" "}
+          <code className="mono">signbox agent create</code>.
         </div>
       )}
 
@@ -89,8 +114,6 @@ function AgentCard({
         <span className={`pill ${enabled ? "live" : "off"}`}>{enabled ? "● guarded" : "✕ disabled"}</span>
       </div>
       <div className="kv">
-        <div className="k">Authority</div>
-        <div className="v">{row.authority}</div>
         <div className="k">Policy</div>
         <div className="v">v{row.version} · {rules} rule{rules === 1 ? "" : "s"}</div>
         <div className="k">Hash</div>

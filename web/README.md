@@ -5,12 +5,14 @@ The authority's surface for SignBox. Three faces, one static app:
 - **Onboarding** (via the CLI's `#…` link): a headless CLI cannot open a
   Proton wallet session; this app reads the onboarding request from the URL
   hash, opens the wallet session, and lets the authority sign.
-- **Agents**: the SignBox contract's policy table, read on-chain (read-only
-  RPC) for the network selected in the header.
-- **Policy editor**: a node-graph editor (Route If → conditions → Decision →
-  Policy) with a live routing simulator; it compiles the graph down to the
-  bounded declarative policy + policyhash. Committing `setpolicy` through the
-  wallet ships in a next pass — the preview shows the exact artifact.
+- **Agents**: gated behind a wallet connection — connecting proves who the
+  authority is, and the app then lists only the agents that authority controls
+  (read on-chain, read-only RPC) on the selected network.
+- **Policy editor**: reached by editing one of your agents. It loads that
+  agent's on-chain policy, decompiles it into a node graph (Route If →
+  conditions → Decision → Policy) with a live routing simulator, and compiles
+  the edits back to the bounded declarative policy + policyhash. **Commit**
+  signs `signbox::setpolicy` in the authority's own wallet.
 
 A **global testnet/mainnet selector** in the header switches the whole app at
 runtime — one build (and one Docker image) serves both networks.

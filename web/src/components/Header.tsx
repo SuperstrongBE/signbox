@@ -1,32 +1,39 @@
 /**
- * App header: brand, view tabs, and the GLOBAL network selector. The selector
- * switches testnet/mainnet at runtime for the whole app (one build, one image).
+ * App header: brand (→ home), wallet connect state, and the GLOBAL network
+ * selector. No standalone editor tab — the editor is only reachable by editing
+ * an agent you control, once connected.
  */
 
 import { useNetwork } from "../context/NetworkContext";
+import { useWallet } from "../context/WalletContext";
 import type { NetworkName } from "../networks";
-
-export type ViewName = "agents" | "editor";
 
 const NETS: NetworkName[] = ["testnet", "mainnet"];
 
-export function Header({ view, onView }: { view: ViewName; onView: (v: ViewName) => void }) {
+export function Header({ onHome }: { onHome: () => void }) {
   const { network, setNetwork } = useNetwork();
+  const { session, connecting, connect, disconnect } = useWallet();
+
   return (
     <header className="topbar">
-      <div className="brand">
+      <button className="brand brandbtn" onClick={onHome} aria-label="home">
         <span className="brandmark" aria-hidden="true" />
         SignBox <small>companion</small>
-      </div>
-      <nav className="tabs" aria-label="views">
-        <button className={`tab ${view === "agents" ? "active" : ""}`} onClick={() => onView("agents")}>
-          Agents
-        </button>
-        <button className={`tab ${view === "editor" ? "active" : ""}`} onClick={() => onView("editor")}>
-          Policy editor
-        </button>
-      </nav>
+      </button>
       <div className="topspacer" />
+
+      {session === null ? (
+        <button className="ghostbtn connectbtn" onClick={() => void connect()} disabled={connecting}>
+          {connecting ? "Opening wallet…" : "Connect wallet"}
+        </button>
+      ) : (
+        <div className="walletchip">
+          <span className="wdot" aria-hidden="true" />
+          <span className="mono">{session.actor}</span>
+          <button className="wdisc" onClick={disconnect} aria-label="disconnect">Disconnect</button>
+        </div>
+      )}
+
       <div className="netsel">
         <span className="netlbl">Network</span>
         <div className="netseg" role="radiogroup" aria-label="network">

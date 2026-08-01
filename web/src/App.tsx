@@ -3,32 +3,33 @@
  *
  * Routing rule: a URL hash carrying an onboarding payload (from
  * `signbox agent create`) renders the onboarding flow — it brings its OWN
- * network. Otherwise the main shell renders: header with the global
- * testnet/mainnet selector + the Agents and Policy editor views.
+ * network. Otherwise the main shell renders behind a wallet connection: the
+ * Agents list (only the connected authority's agents) and, reached by editing
+ * one of them, the policy editor.
  */
 
 import { Suspense, lazy, useMemo, useState } from "react";
 import { loadPayload } from "./link";
 import { AgentsView } from "./views/AgentsView";
 import { EditorView } from "./views/EditorView";
-import { Header, type ViewName } from "./components/Header";
+import { Header } from "./components/Header";
 import { NetworkProvider } from "./context/NetworkContext";
+import { WalletProvider } from "./context/WalletContext";
 
-// Lazy: the onboarding flow pulls @proton/web-sdk (~most of the bundle); the
-// main shell never needs it.
+// Lazy: the onboarding flow pulls @proton/web-sdk; the main shell only needs it
+// once the user connects, so keep it split out of the initial chunk.
 const OnboardingView = lazy(() =>
   import("./views/OnboardingView").then((m) => ({ default: m.OnboardingView })),
 );
 
+type View = { name: "agents" } | { name: "editor"; agent: string };
+
 export function App() {
-  // Decide once at mount: an onboarding link owns the page for its whole flow.
   const payload = useMemo(
     () => (window.location.hash.replace(/^#/, "").trim().length > 0 ? loadPayload() : null),
     [],
   );
-  const [view, setView] = useState<ViewName>("agents");
-  // Agent whose on-chain policy the editor loads; null = blank/demo editing.
-  const [editAgent, setEditAgent] = useState<string | null>(null);
+  const [view, setView] = useState<View>({ name: "agents" });
 
   if (payload !== null) {
     return (
@@ -40,22 +41,18 @@ export function App() {
 
   return (
     <NetworkProvider>
-      <div className="appshell">
-        <Header view={view} onView={setView} />
-        <div className="viewport">
-          {view === "agents" ? (
-            <AgentsView
-              onEdit={(agent) => {
-                setEditAgent(agent);
-                setView("editor");
-              }}
-            />
-          ) : (
-            // Key by agent: picking another agent reloads its policy fresh.
-            <EditorView key={editAgent ?? "blank"} agent={editAgent} />
-          )}
+      <WalletProvider>
+        <div className="appshell">
+          <Header onHome={() => setView({ name: "agents" })} />
+          <div className="viewport">
+            {view.name === "agents" ? (
+              <AgentsView onEdit={(agent) => setView({ name: "editor", agent })} />
+            ) : (
+              <EditorView key={view.agent} agent={view.agent} onBack={() => setView({ name: "agents" })} />
+            )}
+          </div>
         </div>
-      </div>
+      </WalletProvider>
     </NetworkProvider>
   );
 }
