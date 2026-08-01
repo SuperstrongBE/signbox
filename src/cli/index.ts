@@ -23,7 +23,6 @@ import { XPR_CHAIN, XPR_NETWORKS } from "../chains/xpr/networks.js";
 import { generateK1KeyPair } from "../chains/xpr/keygen.js";
 import { runOnboarding, type BuiltRequest } from "../onboarding/flow.js";
 import { XprOnboardingBackend } from "../onboarding/xprBackend.js";
-import { generatePermissionName } from "../onboarding/permission.js";
 import { promoteKeystoreFile, destroyKeystoreFile } from "../keystore/encryptedFile.js";
 import qrcodeTerminal from "qrcode-terminal";
 import { pinChainId } from "../chains/xpr/adapter.js";
@@ -358,6 +357,7 @@ agentCommand
   .option("--permission <name>", "dedicated permission name (generated if omitted)")
   .option("--ram-bytes <n>", "RAM to buy for a new account (paid by the authority)")
   .option("--scheme <scheme>", "signing-request scheme: proton | proton-dev | esr (default from network)")
+  .option("--companion-url <url>", "companion web app base URL (default http://localhost:5173)")
   .action(
     async (options: {
       agent?: string;
@@ -371,6 +371,7 @@ agentCommand
       permission?: string;
       ramBytes?: string;
       scheme?: string;
+      companionUrl?: string;
     }) => {
       // Resolve every input: use the flag if given; otherwise prompt on a TTY;
       // otherwise fall back to a default (or fail for the required fields).
@@ -467,13 +468,16 @@ agentCommand
         }
         scheme = options.scheme as Scheme;
       }
-      const permission = options.permission ?? generatePermissionName();
+      // The agent key is placed on `active` at account creation, so that is
+      // the permission the daemon signs with (overridable via --permission).
+      const permission = options.permission ?? "active";
 
       const backend = new XprOnboardingBackend({
         endpoints: descriptor?.endpoints ?? [],
         chainId: context.chainId,
         signboxContract,
         scheme,
+        ...(options.companionUrl !== undefined ? { companionBaseUrl: options.companionUrl } : {}),
       });
 
       try {
@@ -518,16 +522,24 @@ agentCommand
     },
   );
 
-/** Render the ESR as a terminal QR code plus a human-readable action summary. */
+/** Present the request: the companion web link (preferred) + the actions. */
 function presentEsr(request: BuiltRequest): void {
-  process.stderr.write("\nScan this request with the authority's wallet:\n\n");
-  qrcodeTerminal.generate(request.esrUri, { small: true }, (qr: string) => {
-    process.stderr.write(qr + "\n");
-  });
-  process.stderr.write(`URI: ${request.esrUri}\n\nActions the authority will sign:\n`);
+  process.stderr.write("\nActions the authority will sign:\n");
   for (const a of request.summary) {
     process.stderr.write(`  - ${a.detail}\n`);
   }
+  if (request.companionUrl !== undefined) {
+    process.stderr.write(
+      "\nOpen this link in a browser, connect the authority's wallet, and sign:\n\n" +
+        `  ${request.companionUrl}\n`,
+    );
+  }
+  process.stderr.write(
+    "\nOr scan this signing request directly with a WebAuth mobile wallet:\n\n",
+  );
+  qrcodeTerminal.generate(request.esrUri, { small: true }, (qr: string) => {
+    process.stderr.write(qr + "\n");
+  });
   process.stderr.write("\nWaiting for on-chain confirmation (2 min)...\n");
 }
 

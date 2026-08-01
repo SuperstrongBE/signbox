@@ -203,29 +203,29 @@ describe("onboarding actions (§10.2 step 7)", () => {
   const base = {
     authority: "superdev",
     agent: "superagent",
-    permission: "sbxab12c3",
+    permission: "active",
     agentPublicKey: "PUB_K1_agentkey",
+    authorityPublicKey: "PUB_K1_authoritykey",
     signboxContract: "signbox",
     emptyPolicyJson: '{"schemaVersion":1}',
     emptyPolicyHash: "a".repeat(64),
   };
 
-  it("create mode builds newaccount, buyrambytes, updateauth, createpolicy", () => {
+  // NOTE: updateauth is temporarily disabled (XPR blacklists it in signing
+  // requests), so it is absent from the action set for now (see actions.ts).
+  it("create mode builds newaccount, buyrambytes, createpolicy (updateauth disabled)", () => {
     const actions = buildOnboardingActions({ ...base, mode: "create", ramBytes: 4096 });
     expect(actions.map((a) => `${a.account}::${a.name}`)).toEqual([
       "eosio::newaccount",
       "eosio::buyrambytes",
-      "eosio::updateauth",
       "signbox::createpolicy",
     ]);
+    expect(actions.some((a) => a.name === "updateauth")).toBe(false);
   });
 
-  it("existing mode builds only updateauth and createpolicy", () => {
+  it("existing mode builds only createpolicy (updateauth disabled)", () => {
     const actions = buildOnboardingActions({ ...base, mode: "existing" });
-    expect(actions.map((a) => `${a.account}::${a.name}`)).toEqual([
-      "eosio::updateauth",
-      "signbox::createpolicy",
-    ]);
+    expect(actions.map((a) => `${a.account}::${a.name}`)).toEqual(["signbox::createpolicy"]);
   });
 
   it("the authority pays RAM", () => {
@@ -240,25 +240,24 @@ describe("onboarding actions (§10.2 step 7)", () => {
     expect(actions.some((a) => a.name === "buyrambytes")).toBe(false);
   });
 
-  it("sets the agent owner/active under the authority's control", () => {
+  it("owner = the authority's key, active = the agent's key", () => {
     const actions = buildOnboardingActions({ ...base, mode: "create" });
     const newaccount = actions.find((a) => a.name === "newaccount")!;
     expect(newaccount.data["owner"]).toMatchObject({
       threshold: 1,
-      keys: [],
-      accounts: [{ permission: { actor: "superdev", permission: "active" }, weight: 1 }],
+      keys: [{ key: "PUB_K1_authoritykey", weight: 1 }],
+      accounts: [],
+    });
+    expect(newaccount.data["active"]).toMatchObject({
+      threshold: 1,
+      keys: [{ key: "PUB_K1_agentkey", weight: 1 }],
+      accounts: [],
     });
   });
 
-  it("puts the SignBox key on the dedicated permission, child of active", () => {
+  it("does not use updateauth (agent key goes straight on active)", () => {
     const actions = buildOnboardingActions({ ...base, mode: "create" });
-    const updateauth = actions.find((a) => a.name === "updateauth")!;
-    expect(updateauth.data).toMatchObject({
-      account: "superagent",
-      permission: "sbxab12c3",
-      parent: "active",
-      auth: { threshold: 1, keys: [{ key: "PUB_K1_agentkey", weight: 1 }] },
-    });
+    expect(actions.some((a) => a.name === "updateauth")).toBe(false);
   });
 
   it("createpolicy registers version 1 with the empty policy and hash", () => {
@@ -267,7 +266,7 @@ describe("onboarding actions (§10.2 step 7)", () => {
     expect(createpolicy.data).toMatchObject({
       agent: "superagent",
       authority: "superdev",
-      agentperm: "sbxab12c3",
+      agentperm: "active",
       version: 1,
       policyhash: "a".repeat(64),
       policyjson: '{"schemaVersion":1}',

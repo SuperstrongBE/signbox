@@ -10,7 +10,7 @@
  * the actions and flow tests.
  */
 
-import { JsonRpc } from "@proton/js";
+import { JsonRpc, Numeric } from "@proton/js";
 // The package is mis-packaged (type:module + CJS main, no exports map), so the
 // bare specifier breaks under Node ESM; import the ESM build directly.
 import { SigningRequest } from "@proton/signing-request/lib/proton-signing-request.m.js";
@@ -34,6 +34,8 @@ export interface XprOnboardingOptions {
    */
   scheme?: "esr" | "proton" | "proton-dev";
   pollIntervalMs?: number;
+  /** Base URL of the companion web app that opens a wallet session and signs. */
+  companionBaseUrl?: string;
 }
 
 const zlib = {
@@ -45,7 +47,12 @@ export class XprOnboardingBackend implements OnboardingBackend {
   private readonly opts: Required<XprOnboardingOptions>;
 
   constructor(options: XprOnboardingOptions) {
-    this.opts = { scheme: "proton", pollIntervalMs: 3000, ...options };
+    this.opts = {
+      scheme: "proton",
+      pollIntervalMs: 3000,
+      companionBaseUrl: "http://localhost:5173",
+      ...options,
+    };
   }
 
   private rpc(): JsonRpc {
@@ -97,17 +104,36 @@ export class XprOnboardingBackend implements OnboardingBackend {
     }
   }
 
+  /** Resolve an account's `active` public key from chain (§10.1). */
+  private async resolveActiveKey(account: string): Promise<string> {
+    const info = (await this.rpc().get_account(account)) as {
+      permissions?: { perm_name?: string; required_auth?: { keys?: { key?: string }[] } }[];
+    };
+    const active = (info.permissions ?? []).find((p) => p.perm_name === "active");
+    const key = active?.required_auth?.keys?.[0]?.key;
+    if (key === undefined) {
+      throw new Error(`cannot resolve a public key for the authority's active permission`);
+    }
+    return key;
+  }
+
   async buildRequest(args: {
     input: OnboardingInput;
     agentPublicKey: string;
     emptyPolicyJson: string;
     emptyPolicyHash: string;
   }): Promise<BuiltRequest> {
+    // The new agent account's owner is the authority's own public key, so
+    // resolve it from chain (create mode only needs it).
+    const authorityPublicKey =
+      args.input.mode === "create" ? await this.resolveActiveKey(args.input.authority) : "";
+
     const actions = buildOnboardingActions({
       authority: args.input.authority,
       agent: args.input.agent,
       permission: args.input.permission,
       agentPublicKey: args.agentPublicKey,
+      authorityPublicKey,
       mode: args.input.mode,
       signboxContract: this.opts.signboxContract,
       emptyPolicyJson: args.emptyPolicyJson,
@@ -134,7 +160,30 @@ export class XprOnboardingBackend implements OnboardingBackend {
       { abiProvider: abiProvider as any, zlib, scheme: this.opts.scheme },
     );
 
-    return { esrUri: request.encode(), summary: summarizeActions(actions) };
+    // Companion web link: the full actions travel in the URL hash fragment
+    // (client-side only), so the web app signs EXACTLY these actions. Only
+    // public data is included; the CLI still verifies the landed result
+    // on-chain before activating the key.
+    const payload = {
+      v: 1,
+      kind: "onboard",
+      network: args.input.chain.network,
+      chainId: this.opts.chainId,
+      endpoints: this.opts.endpoints,
+      signboxContract: this.opts.signboxContract,
+      summary: {
+        agent: args.input.agent,
+        authority: args.input.authority,
+        permission: args.input.permission,
+        publicKey: args.agentPublicKey,
+        mode: args.input.mode,
+      },
+      actions,
+    };
+    const fragment = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+    const companionUrl = `${this.opts.companionBaseUrl.replace(/\/$/, "")}/#${fragment}`;
+
+    return { esrUri: request.encode(), summary: summarizeActions(actions), companionUrl };
   }
 
   async waitForConfirmation(agent: string, deadlineMs: number): Promise<{ txid: string } | null> {
@@ -159,7 +208,9 @@ export class XprOnboardingBackend implements OnboardingBackend {
       return { ok: false, reason: "agent account not found" };
     }
 
-    // The dedicated permission must carry exactly the agent's public key.
+    // The agent's signing permission (active) must carry exactly the agent's
+    // public key — proving the onboarding placed the key where the daemon
+    // expects to sign.
     let account: { permissions?: unknown[] };
     try {
       account = (await this.rpc().get_account(args.input.agent)) as { permissions?: unknown[] };
@@ -170,11 +221,11 @@ export class XprOnboardingBackend implements OnboardingBackend {
       (p) => (p as { perm_name?: string }).perm_name === args.input.permission,
     ) as { required_auth?: { keys?: { key?: string }[] } } | undefined;
     if (perm === undefined) {
-      return { ok: false, reason: "dedicated permission not found" };
+      return { ok: false, reason: `permission "${args.input.permission}" not found` };
     }
     const keys = perm.required_auth?.keys ?? [];
     if (!keys.some((k) => normalizeKey(k.key) === normalizeKey(args.agentPublicKey))) {
-      return { ok: false, reason: "dedicated permission does not hold the agent key" };
+      return { ok: false, reason: "agent permission does not hold the agent key" };
     }
 
     // The policy row must exist with the expected authority, permission and
@@ -198,8 +249,19 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Compare public keys ignoring the PUB_K1_/legacy EOS prefix distinction is
- * out of scope; a strict string compare is used, normalized to trimmed form. */
+/**
+ * Canonicalize a public key so the legacy `EOS…` form and the modern
+ * `PUB_K1_…` form of the SAME key compare equal. get_account may return either
+ * representation; parsing to (type + raw bytes) makes the comparison
+ * format-agnostic.
+ */
 function normalizeKey(key: string | undefined): string {
-  return (key ?? "").trim();
+  const s = (key ?? "").trim();
+  if (s === "") return "";
+  try {
+    const parsed = Numeric.stringToPublicKey(s);
+    return `${parsed.type}:${Buffer.from(parsed.data).toString("hex")}`;
+  } catch {
+    return s;
+  }
 }
