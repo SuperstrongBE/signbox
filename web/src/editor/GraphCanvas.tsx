@@ -4,7 +4,7 @@
  * local state; only committed changes hit the reducer.
  */
 
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { GraphNode as NodeModel, NodeType } from "./types";
 import { NODE_W, portPosition } from "./types";
 import { portIndex } from "./nodeSpecs";
@@ -161,6 +161,13 @@ export function GraphCanvas({ evaluation }: { evaluation: Evaluation }) {
   }
 
   const hotColor = evaluation.final === "allow" ? "var(--allow)" : "var(--deny)";
+
+  // Frame the whole graph once on mount (demo or a freshly loaded policy).
+  useEffect(() => {
+    const raf = requestAnimationFrame(fitView);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div

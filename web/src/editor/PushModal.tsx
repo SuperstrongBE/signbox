@@ -16,10 +16,18 @@ type AgentsState =
   | { kind: "error"; message: string }
   | { kind: "ready"; rows: PolicyRow[] };
 
-export function PushModal({ compiled, onClose }: { compiled: CompileResult; onClose: () => void }) {
+export function PushModal({
+  compiled,
+  preselect,
+  onClose,
+}: {
+  compiled: CompileResult;
+  preselect: string | null;
+  onClose: () => void;
+}) {
   const { network, endpoints } = useNetwork();
   const [agents, setAgents] = useState<AgentsState>({ kind: "loading" });
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(preselect);
   const [hash, setHash] = useState<string>("");
 
   useEffect(() => {
@@ -29,7 +37,9 @@ export function PushModal({ compiled, onClose }: { compiled: CompileResult; onCl
         const rows = await listPolicies(endpoints, SIGNBOX_CONTRACT);
         if (!alive) return;
         setAgents({ kind: "ready", rows });
-        setSelected((prev) => prev ?? rows[0]?.agent ?? null);
+        setSelected((prev) =>
+          prev !== null && rows.some((r) => r.agent === prev) ? prev : rows[0]?.agent ?? null,
+        );
       } catch (error) {
         if (!alive) return;
         setAgents({ kind: "error", message: error instanceof Error ? error.message : String(error) });

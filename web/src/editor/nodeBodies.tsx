@@ -31,13 +31,19 @@ export function NodeBody({ node }: { node: GraphNode }) {
   const text = (key: string, placeholder?: string) => (
     <input value={String(f[key] ?? "")} placeholder={placeholder} onChange={set(key)} onPointerDown={stop} />
   );
-  const select = (key: string, options: string[]) => (
-    <select value={String(f[key] ?? "")} onChange={set(key)} onPointerDown={stop}>
-      {options.map((o) => (
-        <option key={o} value={o}>{o}</option>
-      ))}
-    </select>
-  );
+  const select = (key: string, options: string[]) => {
+    const current = String(f[key] ?? "");
+    // A decompiled policy may carry a value outside the preset list (e.g. a
+    // lookup field name) — keep it selectable instead of blanking the control.
+    const all = current !== "" && !options.includes(current) ? [current, ...options] : options;
+    return (
+      <select value={current} onChange={set(key)} onPointerDown={stop}>
+        {all.map((o) => (
+          <option key={o} value={o}>{o}</option>
+        ))}
+      </select>
+    );
+  };
   const check = (key: string, label: string) => (
     <label className="gchk" onPointerDown={stop}>
       <input type="checkbox" checked={f[key] === true} onChange={setBool(key)} />

@@ -1,18 +1,25 @@
 /**
  * Policy editor view: palette · canvas · inspector, with the commit modal.
- * The graph evaluates on every change; the compiled policy carries the
+ *
+ * When opened for an agent (Agents → "Edit policy"), it first LOADS that
+ * agent's policy row from the SignBox contract on the selected network and
+ * decompiles it into the graph — you edit what is actually deployed. Without
+ * an agent it starts on the demo graph. The compiled policy carries the
  * chainId of the globally selected network.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNetwork } from "../context/NetworkContext";
-import { GraphProvider, useGraph } from "../editor/store";
+import { GraphProvider, useGraph, type GraphState } from "../editor/store";
 import { GraphCanvas } from "../editor/GraphCanvas";
 import { Inspector } from "../editor/Inspector";
 import { PushModal } from "../editor/PushModal";
 import { evaluateGraph } from "../editor/eval";
 import { compilePolicy, type CompileResult } from "../editor/compile";
+import { decompilePolicy } from "../editor/decompile";
 import { SAMPLES } from "../editor/samples";
+import { getPolicy } from "../chain/rpc";
+import { SIGNBOX_CONTRACT } from "../networks";
 import type { NodeType } from "../editor/types";
 
 interface PaletteEntry {
@@ -100,9 +107,15 @@ function Palette() {
   );
 }
 
-function EditorInner() {
+interface LoadedPolicy {
+  agent: string;
+  version: number;
+  warnings: string[];
+}
+
+function EditorInner({ loaded }: { loaded: LoadedPolicy | null }) {
   const { state } = useGraph();
-  const { chainId } = useNetwork();
+  const { chainId, network } = useNetwork();
   const [modal, setModal] = useState<CompileResult | null>(null);
 
   const sample = SAMPLES[state.sampleIdx] ?? SAMPLES[0];
@@ -118,18 +131,80 @@ function EditorInner() {
 
   return (
     <div className="editor">
+      {loaded !== null && (
+        <div className="editbanner">
+          Editing <b className="mono">{loaded.agent}</b> · v{loaded.version} loaded from {network}
+          {loaded.warnings.length > 0 && (
+            <span className="ebwarn" title={loaded.warnings.join("\n")}>
+              ⚠ {loaded.warnings.length} construct{loaded.warnings.length > 1 ? "s" : ""} not shown
+            </span>
+          )}
+        </div>
+      )}
       <Palette />
       <GraphCanvas evaluation={evaluation} />
       <Inspector evaluation={evaluation} onCommit={onCommit} />
-      {modal !== null && <PushModal compiled={modal} onClose={() => setModal(null)} />}
+      {modal !== null && (
+        <PushModal compiled={modal} preselect={loaded?.agent ?? null} onClose={() => setModal(null)} />
+      )}
     </div>
   );
 }
 
-export function EditorView() {
+type LoadState =
+  | { kind: "loading" }
+  | { kind: "error"; message: string }
+  | { kind: "ready"; initial: GraphState | undefined; loaded: LoadedPolicy | null };
+
+export function EditorView({ agent }: { agent: string | null }) {
+  const { network, endpoints } = useNetwork();
+  const [load, setLoad] = useState<LoadState>(
+    agent === null ? { kind: "ready", initial: undefined, loaded: null } : { kind: "loading" },
+  );
+
+  useEffect(() => {
+    if (agent === null) return;
+    let alive = true;
+    setLoad({ kind: "loading" });
+    void (async () => {
+      try {
+        const row = await getPolicy(endpoints, SIGNBOX_CONTRACT, agent);
+        if (!alive) return;
+        if (row === null) {
+          setLoad({ kind: "error", message: `no policy row for "${agent}" on ${network}` });
+          return;
+        }
+        const { state, warnings } = decompilePolicy(row.policyjson);
+        setLoad({ kind: "ready", initial: state, loaded: { agent, version: row.version, warnings } });
+      } catch (error) {
+        if (!alive) return;
+        setLoad({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [agent, endpoints, network]);
+
+  if (load.kind === "loading") {
+    return (
+      <div className="editor">
+        <div className="editstate">Loading <b className="mono">{agent}</b>&apos;s policy from {network}…</div>
+      </div>
+    );
+  }
+  if (load.kind === "error") {
+    return (
+      <div className="editor">
+        <div className="editstate error">
+          Could not load the policy: {load.message}
+        </div>
+      </div>
+    );
+  }
   return (
-    <GraphProvider>
-      <EditorInner />
+    <GraphProvider initial={load.initial}>
+      <EditorInner loaded={load.loaded} />
     </GraphProvider>
   );
 }

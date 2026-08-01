@@ -167,8 +167,8 @@ export function demoState(): GraphState {
 
 const GraphContext = createContext<{ state: GraphState; dispatch: Dispatch<GraphAction> } | null>(null);
 
-export function GraphProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, undefined, demoState);
+export function GraphProvider({ initial, children }: { initial?: GraphState; children: ReactNode }) {
+  const [state, dispatch] = useReducer(reducer, initial ?? undefined, (arg) => arg ?? demoState());
   return <GraphContext.Provider value={{ state, dispatch }}>{children}</GraphContext.Provider>;
 }
 

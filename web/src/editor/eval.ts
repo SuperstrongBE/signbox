@@ -99,7 +99,9 @@ function getPath(obj: unknown, path: string): unknown {
 }
 
 function substitute(value: string, action: SampleAction): string {
-  if (value === "$agent") return "funagent";
+  // In the simulator every sample IS the agent's own transaction, so $agent
+  // resolves to the tx's `from` — a `data.from == $agent` rule then holds.
+  if (value === "$agent") return action.data.from;
   if (value.startsWith("$")) {
     const resolved = getPath(action, value.slice(1));
     return typeof resolved === "string" ? resolved : value;
@@ -186,7 +188,10 @@ function evalNode(
     }
     case "decision": {
       const tx = one("tx");
-      const cond = one("cond");
+      // A rule with no extra predicate (only a Route If) fires on routing
+      // alone; a wired condition must be true.
+      const hasCond = inboundNodes(ctx.nodes, ctx.wires, node.id, "cond").length > 0;
+      const cond = hasCond ? one("cond") : true;
       out = tx !== undefined && tx !== null && tx !== SKIP && cond === true
         ? { effect: f["effect"], rule: node.id }
         : tx === SKIP ? SKIP : null;

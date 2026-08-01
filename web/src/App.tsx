@@ -27,6 +27,8 @@ export function App() {
     [],
   );
   const [view, setView] = useState<ViewName>("agents");
+  // Agent whose on-chain policy the editor loads; null = blank/demo editing.
+  const [editAgent, setEditAgent] = useState<string | null>(null);
 
   if (payload !== null) {
     return (
@@ -41,7 +43,17 @@ export function App() {
       <div className="appshell">
         <Header view={view} onView={setView} />
         <div className="viewport">
-          {view === "agents" ? <AgentsView onEdit={() => setView("editor")} /> : <EditorView />}
+          {view === "agents" ? (
+            <AgentsView
+              onEdit={(agent) => {
+                setEditAgent(agent);
+                setView("editor");
+              }}
+            />
+          ) : (
+            // Key by agent: picking another agent reloads its policy fresh.
+            <EditorView key={editAgent ?? "blank"} agent={editAgent} />
+          )}
         </div>
       </div>
     </NetworkProvider>

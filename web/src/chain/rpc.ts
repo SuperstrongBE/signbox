@@ -61,3 +61,21 @@ export async function listPolicies(endpoints: string[], contract: string): Promi
   });
   return result.rows;
 }
+
+/** Fetch ONE agent's policy row (bounded primary-key query), or null. */
+export async function getPolicy(
+  endpoints: string[],
+  contract: string,
+  agent: string,
+): Promise<PolicyRow | null> {
+  const result = await getTableRows<PolicyRow>(endpoints, {
+    code: contract,
+    scope: contract,
+    table: "policies",
+    lower_bound: agent,
+    upper_bound: agent,
+    limit: 1,
+  });
+  const row = result.rows[0];
+  return row !== undefined && row.agent === agent ? row : null;
+}
