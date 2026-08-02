@@ -114,7 +114,11 @@
 
 .appmain { flex: 1; min-height: 0; position: relative; }
 .appshell.tool .appmain { overflow: hidden; }
-.appshell.site .appmain { overflow-y: auto; }
+/* Content pages: the whole document scrolls, header sticks, footer lands at
+   the natural bottom (not pinned over the content). */
+.appshell.pagemode { position: static; height: auto; min-height: 100vh; }
+.appshell.pagemode .appmain { overflow: visible; }
+.appshell.pagemode .topbar { position: sticky; top: 0; z-index: 20; }
 
 /* ---------- agents view ---------- */
 .agents { height: 100%; overflow: auto; padding: 26px clamp(16px, 4vw, 44px); }
@@ -360,6 +364,13 @@
 .propgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
 .propcard { padding: 20px; background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--accent); }
 
+.usecases { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 258px), 1fr)); gap: 14px; }
+.ucard { display: flex; flex-direction: column; gap: 10px; padding: 22px 20px; background: var(--panel); border: 1px solid var(--line); }
+.ucard:hover { border-color: var(--line2); }
+.ucicon { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line2)); }
+.ucard h3 { margin: 4px 0 0; font-size: 16px; font-weight: 640; }
+.ucard p { margin: 0; color: var(--mut); line-height: 1.55; font-size: 13.5px; }
+
 .cta { text-align: center; padding: 56px 0 8px; }
 .cta h2 { font-size: clamp(22px, 3.5vw, 30px); letter-spacing: -0.5px; margin: 0 0 22px; font-weight: 680; text-wrap: balance; }
 .cta .herocta { justify-content: center; }
@@ -403,7 +414,9 @@
   .flowstep, .gsstep { padding: 16px 14px; gap: 12px; }
   .propgrid { grid-template-columns: 1fr; }
   .footinner { padding: 16px; gap: 8px 14px; }
-  .footmut { order: 3; width: 100%; min-width: 0; }
+  /* flex-basis 100% (not width, which flex-basis:0 would override) forces the
+     tagline onto its own row instead of squishing + overflowing. */
+  .footmut { order: 3; flex: 0 0 100%; min-width: 0; }
 }
 
 /* ---------- squared aesthetic: no rounded rectangles, only round indicators ---------- */

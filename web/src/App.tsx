@@ -27,9 +27,12 @@ const OnboardingView = lazy(() =>
 
 function Shell() {
   const route = useRoute();
-  const isTool = route.name === "editor";
+  // Content pages flow naturally (footer at the end of the document, sticky
+  // header); the app views (agents, editor) fill the viewport and scroll
+  // internally.
+  const isPage = route.name === "home" || route.name === "getting-started";
   return (
-    <div className={`appshell ${isTool ? "tool" : "site"}`}>
+    <div className={`appshell ${isPage ? "pagemode" : "tool"}`}>
       <Header />
       <ConnectPortal />
       <main className="appmain">
@@ -40,7 +43,7 @@ function Shell() {
           <EditorView key={route.agent} agent={route.agent} onBack={() => navigate("/my-agents")} />
         )}
       </main>
-      {!isTool && <Footer />}
+      {isPage && <Footer />}
     </div>
   );
 }

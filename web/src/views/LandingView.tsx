@@ -3,7 +3,36 @@
  * the only interactive bits are the CTAs into /getting-started and /my-agents.
  */
 
+import { MessagesSquare, Receipt, TrendingUp, Workflow, ShoppingBag, type LucideIcon } from "lucide-react";
 import { Link } from "../router";
+
+const USE_CASES: { Icon: LucideIcon; title: string; body: string }[] = [
+  {
+    Icon: MessagesSquare,
+    title: "Group chat interaction",
+    body: "A bot in a Telegram or Discord group that tips, rewards, or pays out on request. The policy caps amounts and whitelists recipients — a poisoned prompt can nag, but never drain.",
+  },
+  {
+    Icon: Receipt,
+    title: "HTTP 402 payments",
+    body: "Agents that pay-per-request for APIs, data, or compute (HTTP 402 / x402). SignBox is the metered spending account: it settles the invoices, the policy holds the budget and rate limits.",
+  },
+  {
+    Icon: TrendingUp,
+    title: "Trading agent",
+    body: "A strategy that swaps and rebalances on-chain. Pin it to specific contracts, position sizes, and cooldowns — a jailbreak can't wire funds to an attacker or blow past the caps.",
+  },
+  {
+    Icon: Workflow,
+    title: "Automated systems",
+    body: "Backend jobs that disburse on a schedule — payroll, subscriptions, refunds, drips. Give the automation its own account with per-recipient limits and a kill-switch, not a hot key with god mode.",
+  },
+  {
+    Icon: ShoppingBag,
+    title: "E-commerce",
+    body: "A shopping or storefront agent that pays suppliers or issues refunds within rules you set: allowed merchants, amount ceilings, daily totals — every payment auditable on-chain.",
+  },
+];
 
 const FLOW: { n: string; title: string; body: string }[] = [
   {
@@ -100,6 +129,22 @@ export function LandingView() {
             </li>
           ))}
         </ol>
+      </section>
+
+      <section className="band">
+        <div className="bandhead">
+          <h2>What people build with it</h2>
+          <p>Any agent that needs to move value — with rails you set, not trust you hope for.</p>
+        </div>
+        <div className="usecases">
+          {USE_CASES.map((uc) => (
+            <div key={uc.title} className="ucard">
+              <span className="ucicon"><uc.Icon size={19} strokeWidth={2} /></span>
+              <h3>{uc.title}</h3>
+              <p>{uc.body}</p>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="band">
