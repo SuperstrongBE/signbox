@@ -348,8 +348,10 @@
 .bbarrow { color: var(--mut2); font-size: 20px; text-align: center; }
 @media (max-width: 760px) { .blackbox { grid-template-columns: 1fr; } .bbarrow { transform: rotate(90deg); } }
 
-.flow { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-.flowstep, .gsstep { display: flex; gap: 16px; padding: 20px; background: var(--panel); border: 1px solid var(--line); }
+.flow { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+/* min-width:0 lets these grid items shrink so a code block scrolls internally
+   instead of forcing the whole step wider than the viewport (mobile). */
+.flowstep, .gsstep { display: flex; min-width: 0; gap: 16px; padding: 20px; background: var(--panel); border: 1px solid var(--line); }
 .flowstep + .flowstep { border-top: 0; }
 .flown { font-family: var(--monoxs); font-size: 13px; font-weight: 700; color: var(--accent); flex: none; padding-top: 2px; letter-spacing: 1px; }
 .flowstep h3, .propcard h3, .gsbody h3 { margin: 0 0 6px; font-size: 16px; font-weight: 640; }
@@ -365,7 +367,7 @@
 /* ---------- getting started ---------- */
 .gshead { padding: 20px 0 34px; border-bottom: 1px solid var(--line); }
 .gshead h1 { font-size: clamp(28px, 5vw, 42px); letter-spacing: -0.8px; margin: 0 0 16px; font-weight: 700; text-wrap: balance; }
-.gssteps { list-style: none; margin: 34px 0 0; padding: 0; display: grid; gap: 16px; }
+.gssteps { list-style: none; margin: 34px 0 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .gsstep { align-items: flex-start; }
 .gsbody { flex: 1; min-width: 0; }
 .gsbody > p { color: var(--mut); line-height: 1.6; margin: 0 0 12px; }
@@ -381,6 +383,28 @@
 .footnav { display: flex; gap: 18px; }
 .footnav a { color: var(--mut); font-size: 13px; text-decoration: none; }
 .footnav a:hover { color: var(--accent); }
+
+/* ---------- mobile ---------- */
+.gscmd, .mjson { max-width: 100%; }
+.page p, .page li, .page code, .gsbody { overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  /* Header wraps the nav onto its own row instead of overflowing. */
+  .topbar { flex-wrap: wrap; gap: 8px 10px; padding: 10px 14px; }
+  .brand { order: 1; }
+  .brand small { display: none; }
+  .topspacer { order: 2; }
+  .connectbtn, .walletchip { order: 3; }
+  .topnav { order: 4; width: 100%; margin-left: 0; gap: 4px; border-top: 1px solid var(--line); padding-top: 6px; }
+  .navlink { padding: 6px 8px; font-size: 13px; }
+
+  .page { padding: 26px 16px 52px; }
+  .hero { padding: 18px 0 30px; }
+  .band { padding: 32px 0; }
+  .flowstep, .gsstep { padding: 16px 14px; gap: 12px; }
+  .propgrid { grid-template-columns: 1fr; }
+  .footinner { padding: 16px; gap: 8px 14px; }
+  .footmut { order: 3; width: 100%; min-width: 0; }
+}
 
 /* ---------- squared aesthetic: no rounded rectangles, only round indicators ---------- */
 .appshell *, .appshell *::before, .appshell *::after { border-radius: 0 !important; }
