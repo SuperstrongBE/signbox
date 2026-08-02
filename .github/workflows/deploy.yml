@@ -2,10 +2,13 @@
 #
 #   git tag release/1.2.3 && git push origin release/1.2.3
 #
-# Builds + tests + publishes the CLI (tarball on the GitHub Release AND an
-# install on the server), and builds + (re)starts the web container. The
-# version from the tag is stamped into package.json so `signbox --version`
-# matches the release.
+# Two independent jobs:
+#   - cli: build + test the CLI, then publish the tarball to the GitHub Release
+#          (users `npm i -g` it on their OWN machine — the daemon runs there,
+#          NOT on this server).
+#   - web: build + (re)start the companion web container on the deploy server,
+#          which is web-only and serves signbox.rockerone.io over its own Caddy.
+# The tag's version is stamped into package.json so `signbox --version` matches.
 #
 # Secrets:   DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY
 # Variables: DEPLOY_PORT (default 22), DEPLOY_PATH (default ~/signbox)
@@ -72,39 +75,6 @@ jobs:
           tag_name: ${{ env.DEPLOY_REF }}
           name: signbox ${{ env.VERSION }}
           files: signbox-*.tgz
-
-      - name: Copy tarball to the server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: ${{ vars.DEPLOY_PORT || '22' }}
-          source: "signbox-*.tgz"
-          target: "/tmp/signbox-deploy"
-
-      - name: Install the CLI on the server
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: ${{ vars.DEPLOY_PORT || '22' }}
-          script: |
-            set -e
-            # A non-interactive SSH shell skips ~/.bashrc/~/.profile, so a
-            # version-managed Node (nvm/fnm) is not on PATH. Load it first.
-            export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-            command -v fnm >/dev/null 2>&1 && eval "$(fnm env)" >/dev/null 2>&1 || true
-            export PATH="$PATH:/usr/local/bin:/usr/bin:$HOME/.local/bin"
-            command -v npm >/dev/null 2>&1 || { echo "npm not found on the server (install Node, or add its bin dir to PATH above)"; exit 127; }
-            npm install -g /tmp/signbox-deploy/signbox-*.tgz
-            rm -f /tmp/signbox-deploy/signbox-*.tgz
-            echo "signbox is now $(signbox --version)"
-            # The RUNNING daemon keeps the old code until you restart it — that
-            # needs the keystore passphrase, so it's a manual step:
-            #   signbox daemon restart
 
   web:
     name: Web · build · deploy
