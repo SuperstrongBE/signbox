@@ -1,16 +1,22 @@
 # SignBox companion web — deployed by .github/workflows/deploy.yml on a
 # `release/x.x.x` tag.
 #
-# Conflict-free by construction:
-#  - `name: signbox`      → its own compose project + isolated network,
-#  - `container_name`     → a dedicated name, replaced on each `up -d`,
-#  - `127.0.0.1:8085:80`  → bound to localhost only, so it can't clash with a
-#                           public port and isn't reachable except through your
-#                           reverse proxy. Your nginx/Caddy fronts the domain
-#                           and proxies signbox.rockerone.io → 127.0.0.1:8085.
+# Fronted by the SHARED Caddy on this host (the one that already owns :80/:443
+# for the other sites). That Caddy reaches this container by name over the
+# external `rockerone-edge` network, so its vhost is just:
+#     signbox.rockerone.io { reverse_proxy signbox-web:80 }
 #
-# Change 8085 if that port is already taken on the host.
+# One-time host setup (idempotent), needed before the first deploy:
+#     docker network create rockerone-edge
+#
+# The `127.0.0.1:8085:80` publish is kept for local debugging only
+# (`curl localhost:8085`); the public path is Caddy → signbox-web:80.
 name: signbox
+
+networks:
+  # Created once on the host; shared with the Caddy container's compose project.
+  rockerone-edge:
+    external: true
 
 services:
   web:
@@ -18,5 +24,7 @@ services:
     image: signbox-web:latest
     container_name: signbox-web
     restart: unless-stopped
+    networks:
+      - rockerone-edge
     ports:
       - "127.0.0.1:8085:80"
