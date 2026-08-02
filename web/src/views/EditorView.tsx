@@ -169,7 +169,7 @@ function EditorInner({
 }) {
   const { state, dispatch } = useGraph();
   const { chainId, network, endpoints } = useNetwork();
-  const { session } = useWallet();
+  const { session, setLeaveGuard } = useWallet();
   const [modal, setModal] = useState<CompileResult | null>(null);
   // First-run walkthrough — shown once (localStorage flag), replayable from the palette.
   const [tourOpen, setTourOpen] = useState(() => {
@@ -273,10 +273,14 @@ function EditorInner({
   const dirty = currentCanon !== baselineRef.current;
 
   const [confirmLeave, setConfirmLeave] = useState<(() => void) | null>(null);
-  const guard = (action: () => void) => {
-    if (dirty) setConfirmLeave(() => action);
+  // Stable across renders (setConfirmLeave is stable, `dirty` read via ref) so
+  // the disconnect guard below registers once.
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  const guard = useCallback((action: () => void) => {
+    if (dirtyRef.current) setConfirmLeave(() => action);
     else action();
-  };
+  }, []);
 
   useEffect(() => {
     if (!dirty) return;
@@ -287,6 +291,14 @@ function EditorInner({
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
+
+  // Disconnecting (from the header) while in the editor drops the session, then
+  // returns to the agents list — which shows the "Connect your wallet" gate.
+  // Same dirty-confirm as Back/switch, so unsaved work isn't lost silently.
+  useEffect(() => {
+    setLeaveGuard((proceed) => guard(() => { proceed(); onBack(); }));
+    return () => setLeaveGuard(null);
+  }, [setLeaveGuard, guard, onBack]);
 
   // Agents the connected authority controls — for the switcher dropdown.
   const [agentList, setAgentList] = useState<string[]>([loaded.agent]);

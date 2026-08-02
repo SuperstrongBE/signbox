@@ -21,6 +21,12 @@ interface WalletState {
   closePicker: () => void;
   connect: (network: NetworkName) => Promise<void>;
   disconnect: () => void;
+  /**
+   * Install a guard that intercepts `disconnect` (e.g. the editor confirming
+   * unsaved changes). The guard receives a `proceed` callback and must call it
+   * to actually drop the session. Pass `null` to remove the guard.
+   */
+  setLeaveGuard: (guard: ((proceed: () => void) => void) | null) => void;
 }
 
 const WalletContext = createContext<WalletState | null>(null);
@@ -67,7 +73,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     [setNetwork],
   );
 
-  const disconnect = useCallback(() => setSession(null), []);
+  // A view (the editor) can gate disconnect behind its own confirm flow.
+  const leaveGuardRef = useRef<((proceed: () => void) => void) | null>(null);
+  const setLeaveGuard = useCallback((guard: ((proceed: () => void) => void) | null) => {
+    leaveGuardRef.current = guard;
+  }, []);
+  const disconnect = useCallback(() => {
+    const drop = () => setSession(null);
+    const guard = leaveGuardRef.current;
+    if (guard !== null) guard(drop);
+    else drop();
+  }, []);
   const openPicker = useCallback(() => {
     setError(null);
     setPickerOpen(true);
@@ -81,7 +97,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   return (
     <WalletContext.Provider
-      value={{ session, connecting, error, pickerOpen, openPicker, closePicker, connect, disconnect }}
+      value={{ session, connecting, error, pickerOpen, openPicker, closePicker, connect, disconnect, setLeaveGuard }}
     >
       {children}
     </WalletContext.Provider>
