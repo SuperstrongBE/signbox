@@ -504,8 +504,10 @@ daemonCommand
   .action(async (options: { config: string }) => {
     try {
       const config = loadConfig(options.config);
-      const running = await startDaemonFromConfig(config, (keystore) =>
-        promptPassphrase(`passphrase for ${keystore}: `),
+      const running = await startDaemonFromConfig(config, (keystore, attempt) =>
+        promptPassphrase(
+          attempt > 1 ? `wrong passphrase — retry for ${keystore}: ` : `passphrase for ${keystore}: `,
+        ),
       );
       process.stderr.write(
         `signbox daemon listening on ${config.socketPath} (${running.agents.length} agent(s): ${running.agents.join(", ") || "none"})\n`,
@@ -567,12 +569,11 @@ agentCommand
   .option("--out <path>", "keystore file to create")
   .option("--chain <chain>", "chain (XPR only for now)")
   .option("--network <network>", "network (mainnet/testnet)")
-  .option("--mode <mode>", "create a new agent account or onboard an existing one")
   .option("--export <policy>", "key export policy: non-exportable | encrypted-backup-only")
   .option("--permission <name>", "dedicated permission name (generated if omitted)")
   .option("--ram-bytes <n>", "RAM to buy for a new account (paid by the authority)")
   .option("--scheme <scheme>", "signing-request scheme: proton | proton-dev | esr (default from network)")
-  .option("--companion-url <url>", "companion web app base URL (default http://localhost:5173)")
+  .option("--companion-url <url>", "companion web app base URL (default https://signbox.rockerone.io; use http://localhost:5173 for local dev)")
   .action(
     async (options: {
       agent?: string;
@@ -581,7 +582,6 @@ agentCommand
       out?: string;
       chain?: string;
       network?: string;
-      mode?: string;
       export?: string;
       permission?: string;
       ramBytes?: string;
@@ -631,20 +631,6 @@ agentCommand
       const agent = await req(options.agent, "agent", () =>
         promptText("Agent account name", { validate: validateAccountName }),
       );
-      const mode = await def(
-        options.mode,
-        () =>
-          promptSelect(
-            "Mode:",
-            [
-              { value: "create", label: "create a new agent account" },
-              { value: "existing", label: "onboard an existing account" },
-            ],
-            { default: "create" },
-          ),
-        "create",
-      );
-      if (mode !== "create" && mode !== "existing") fail(`--mode must be "create" or "existing"`);
 
       const exportPolicy = await def(
         options.export,
@@ -702,10 +688,9 @@ agentCommand
             authority,
             agent,
             permission,
-            mode,
             exportPolicy,
             keystorePath: expandPath(out),
-            ...(mode === "create" ? { ramBytes: Number(options.ramBytes ?? "4096") } : {}),
+            ramBytes: Number(options.ramBytes ?? "4096"),
           },
           {
             backend,
@@ -745,16 +730,22 @@ function presentEsr(request: BuiltRequest): void {
   }
   if (request.companionUrl !== undefined) {
     process.stderr.write(
-      "\nOpen this link in a browser, connect the authority's wallet, and sign:\n\n" +
-        `  ${request.companionUrl}\n`,
+      "\nOpen this link — or scan the QR with your phone — connect the authority's wallet, and sign:\n\n" +
+        `  ${request.companionUrl}\n\n`,
     );
+    // The QR is the companion LINK: scanning it opens the web app, which drives
+    // the WebAuth session and the signature in the browser.
+    qrcodeTerminal.generate(request.companionUrl, { small: true }, (qr: string) => {
+      process.stderr.write(qr + "\n");
+    });
+  } else {
+    process.stderr.write(
+      "\nScan this signing request directly with a WebAuth mobile wallet:\n\n",
+    );
+    qrcodeTerminal.generate(request.esrUri, { small: true }, (qr: string) => {
+      process.stderr.write(qr + "\n");
+    });
   }
-  process.stderr.write(
-    "\nOr scan this signing request directly with a WebAuth mobile wallet:\n\n",
-  );
-  qrcodeTerminal.generate(request.esrUri, { small: true }, (qr: string) => {
-    process.stderr.write(qr + "\n");
-  });
   process.stderr.write("\nWaiting for on-chain confirmation (2 min)...\n");
 }
 

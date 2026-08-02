@@ -88,7 +88,6 @@ function input(overrides?: Partial<OnboardingInput>): OnboardingInput {
     authority: "superdev",
     agent: "superagent",
     permission: "sbxab12c3",
-    mode: "create",
     exportPolicy: "non-exportable",
     keystorePath: "/tmp/agent.keystore.json",
     ramBytes: 4096,
@@ -177,18 +176,11 @@ describe("onboarding flow — fail closed (§10.3)", () => {
     expect(rec.events).not.toContain("createTemp");
   });
 
-  it("refuses when the agent account already exists (create mode)", async () => {
+  it("refuses when the agent account already exists", async () => {
     backend.agentAccount = true;
-    await expect(runOnboarding(input({ mode: "create" }), makeDeps(rec, backend))).rejects.toThrowError(
+    await expect(runOnboarding(input(), makeDeps(rec, backend))).rejects.toThrowError(
       expect.objectContaining({ code: "AGENT_EXISTS" }),
     );
-  });
-
-  it("refuses when the agent account is missing (existing mode)", async () => {
-    backend.agentAccount = false;
-    await expect(
-      runOnboarding(input({ mode: "existing" }), makeDeps(rec, backend)),
-    ).rejects.toThrowError(expect.objectContaining({ code: "AGENT_MISSING" }));
   });
 
   it("refuses when a policy row already exists", async () => {
@@ -213,8 +205,8 @@ describe("onboarding actions (§10.2 step 7)", () => {
 
   // NOTE: updateauth is temporarily disabled (XPR blacklists it in signing
   // requests), so it is absent from the action set for now (see actions.ts).
-  it("create mode builds newaccount, buyrambytes, createpolicy (updateauth disabled)", () => {
-    const actions = buildOnboardingActions({ ...base, mode: "create", ramBytes: 4096 });
+  it("builds newaccount, buyrambytes, createpolicy (updateauth disabled)", () => {
+    const actions = buildOnboardingActions({ ...base, ramBytes: 4096 });
     expect(actions.map((a) => `${a.account}::${a.name}`)).toEqual([
       "eosio::newaccount",
       "eosio::buyrambytes",
@@ -223,25 +215,20 @@ describe("onboarding actions (§10.2 step 7)", () => {
     expect(actions.some((a) => a.name === "updateauth")).toBe(false);
   });
 
-  it("existing mode builds only createpolicy (updateauth disabled)", () => {
-    const actions = buildOnboardingActions({ ...base, mode: "existing" });
-    expect(actions.map((a) => `${a.account}::${a.name}`)).toEqual(["signbox::createpolicy"]);
-  });
-
   it("the authority pays RAM", () => {
-    const actions = buildOnboardingActions({ ...base, mode: "create", ramBytes: 8192 });
+    const actions = buildOnboardingActions({ ...base, ramBytes: 8192 });
     const buyram = actions.find((a) => a.name === "buyrambytes")!;
     expect(buyram.data).toMatchObject({ payer: "superdev", receiver: "superagent", bytes: 8192 });
     expect(buyram.authorization).toEqual([{ actor: "superdev", permission: "active" }]);
   });
 
   it("omits the RAM purchase when ramBytes is 0", () => {
-    const actions = buildOnboardingActions({ ...base, mode: "create", ramBytes: 0 });
+    const actions = buildOnboardingActions({ ...base, ramBytes: 0 });
     expect(actions.some((a) => a.name === "buyrambytes")).toBe(false);
   });
 
   it("owner = the authority's key, active = the agent's key", () => {
-    const actions = buildOnboardingActions({ ...base, mode: "create" });
+    const actions = buildOnboardingActions({ ...base });
     const newaccount = actions.find((a) => a.name === "newaccount")!;
     expect(newaccount.data["owner"]).toMatchObject({
       threshold: 1,
@@ -256,12 +243,12 @@ describe("onboarding actions (§10.2 step 7)", () => {
   });
 
   it("does not use updateauth (agent key goes straight on active)", () => {
-    const actions = buildOnboardingActions({ ...base, mode: "create" });
+    const actions = buildOnboardingActions({ ...base });
     expect(actions.some((a) => a.name === "updateauth")).toBe(false);
   });
 
   it("createpolicy registers version 1 with the empty policy and hash", () => {
-    const actions = buildOnboardingActions({ ...base, mode: "create" });
+    const actions = buildOnboardingActions({ ...base });
     const createpolicy = actions.find((a) => a.name === "createpolicy")!;
     expect(createpolicy.data).toMatchObject({
       agent: "superagent",

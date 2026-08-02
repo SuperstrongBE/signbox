@@ -50,6 +50,18 @@ export function NodeBody({ node }: { node: GraphNode }) {
       {label}
     </label>
   );
+  // Free-text input with preset suggestions — type a custom path or pick one.
+  const combo = (key: string, options: string[], placeholder?: string) => {
+    const listId = `dl-${node.id}-${key}`;
+    return (
+      <>
+        <input list={listId} value={String(f[key] ?? "")} placeholder={placeholder} onChange={set(key)} onPointerDown={stop} />
+        <datalist id={listId}>
+          {options.map((o) => (<option key={o} value={o} />))}
+        </datalist>
+      </>
+    );
+  };
 
   switch (node.type) {
     case "transaction":
@@ -63,8 +75,8 @@ export function NodeBody({ node }: { node: GraphNode }) {
       );
     case "getfield":
       return (
-        <Field label="field path">
-          {select("path", ["contract", "action", "data.from", "data.to", "data.quantity.amount", "data.quantity.symbol", "allowed", "tier"])}
+        <Field label="field path (custom)">
+          {combo("path", ["contract", "action", "data.from", "data.to", "data.quantity.amount", "data.quantity.symbol", "data.memo", "allowed", "tier"], "data.your_field")}
         </Field>
       );
     case "constant":
@@ -93,12 +105,23 @@ export function NodeBody({ node }: { node: GraphNode }) {
     case "lookup":
       return (
         <>
-          <div className="grow2">
-            <Field label="contract">{text("contract")}</Field>
-            <Field label="table">{text("table")}</Field>
-          </div>
-          <Field label="key">{text("key", "$agent")}</Field>
-          <div className="gempty">provider: {String(f["provider"])}</div>
+          <Field label="source">{select("mode", ["table", "http"])}</Field>
+          {f["mode"] === "http" ? (
+            <>
+              <Field label="url">{text("url", "https://api.example.com/…")}</Field>
+              <Field label="json path">{text("httpPath", "data.0.value")}</Field>
+              <div className="glimbadge">⚠ HTTP · test-only · NOT enforced by the daemon (omitted from the pushed policy)</div>
+            </>
+          ) : (
+            <>
+              <div className="grow2">
+                <Field label="contract">{text("contract")}</Field>
+                <Field label="table">{text("table")}</Field>
+              </div>
+              <Field label="key">{text("key", "$agent")}</Field>
+              <div className="gempty">provider: xpr.rpc.tableRow · enforced on-chain</div>
+            </>
+          )}
         </>
       );
     case "decision":

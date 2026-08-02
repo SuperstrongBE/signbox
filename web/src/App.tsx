@@ -1,36 +1,58 @@
 /**
  * Companion app root.
  *
- * Routing rule: a URL hash carrying an onboarding payload (from
- * `signbox agent create`) renders the onboarding flow — it brings its OWN
- * network. Otherwise the main shell renders behind a wallet connection: the
- * Agents list (only the connected authority's agents) and, reached by editing
- * one of them, the policy editor.
+ * A URL hash carrying an onboarding payload (from `signbox agent create`)
+ * renders the onboarding flow — it brings its OWN network. Otherwise the site
+ * routes by path: landing, getting-started, the agents list (behind a wallet),
+ * and the policy editor.
  */
 
-import { Suspense, lazy, useMemo, useState } from "react";
+import { Suspense, lazy, useMemo } from "react";
 import { loadPayload } from "./link";
+import { useRoute, navigate } from "./router";
 import { AgentsView } from "./views/AgentsView";
 import { EditorView } from "./views/EditorView";
+import { LandingView } from "./views/LandingView";
+import { GettingStartedView } from "./views/GettingStartedView";
 import { Header } from "./components/Header";
+import { Footer } from "./components/Footer";
 import { ConnectPortal } from "./components/ConnectModal";
 import { NetworkProvider } from "./context/NetworkContext";
 import { WalletProvider } from "./context/WalletContext";
 
-// Lazy: the onboarding flow pulls @proton/web-sdk; the main shell only needs it
-// once the user connects, so keep it split out of the initial chunk.
+// Lazy: the onboarding flow pulls @proton/web-sdk; keep it off the site chunk.
 const OnboardingView = lazy(() =>
   import("./views/OnboardingView").then((m) => ({ default: m.OnboardingView })),
 );
 
-type View = { name: "agents" } | { name: "editor"; agent: string };
+function Shell() {
+  const route = useRoute();
+  // Content pages flow naturally (footer at the end of the document, sticky
+  // header); the app views (agents, editor) fill the viewport and scroll
+  // internally.
+  const isPage = route.name === "home" || route.name === "getting-started";
+  return (
+    <div className={`appshell ${isPage ? "pagemode" : "tool"}`}>
+      <Header />
+      <ConnectPortal />
+      <main className="appmain">
+        {route.name === "home" && <LandingView />}
+        {route.name === "getting-started" && <GettingStartedView />}
+        {route.name === "agents" && <AgentsView onEdit={(agent) => navigate(`/my-agents/${agent}`)} />}
+        {route.name === "editor" && (
+          <EditorView key={route.agent} agent={route.agent} onBack={() => navigate("/my-agents")} />
+        )}
+      </main>
+      {isPage && <Footer />}
+    </div>
+  );
+}
 
 export function App() {
   const payload = useMemo(
     () => (window.location.hash.replace(/^#/, "").trim().length > 0 ? loadPayload() : null),
     [],
   );
-  const [view, setView] = useState<View>({ name: "agents" });
 
   if (payload !== null) {
     return (
@@ -43,17 +65,7 @@ export function App() {
   return (
     <NetworkProvider>
       <WalletProvider>
-        <div className="appshell">
-          <Header onHome={() => setView({ name: "agents" })} />
-          <ConnectPortal />
-          <div className="viewport">
-            {view.name === "agents" ? (
-              <AgentsView onEdit={(agent) => setView({ name: "editor", agent })} />
-            ) : (
-              <EditorView key={view.agent} agent={view.agent} onBack={() => setView({ name: "agents" })} />
-            )}
-          </div>
-        </div>
+        <Shell />
       </WalletProvider>
     </NetworkProvider>
   );

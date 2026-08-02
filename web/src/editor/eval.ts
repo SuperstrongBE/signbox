@@ -68,7 +68,7 @@ export interface Evaluation {
   hotWires: Set<string>;
 }
 
-export type LookupResolver = (fields: Record<string, string | boolean>) => unknown;
+export type LookupResolver = (fields: Record<string, string | boolean>, action: SampleAction) => unknown;
 
 /** Deterministic mock rows so the editor is explorable offline. */
 export const mockLookup: LookupResolver = (fields) => {
@@ -183,7 +183,7 @@ function evalNode(
     case "boolnot": out = one("in") !== true; break;
     case "lookup": {
       const tx = one("tx");
-      out = tx === undefined || tx === SKIP ? undefined : ctx.lookup(f);
+      out = tx === undefined || tx === SKIP ? undefined : ctx.lookup(f, ctx.action);
       break;
     }
     case "decision": {

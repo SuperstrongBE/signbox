@@ -32,7 +32,9 @@ function fmtValue(v: unknown): string {
 function fmtLookup(v: unknown): string {
   if (v !== null && typeof v === "object" && !Array.isArray(v)) {
     const obj = v as Record<string, unknown>;
-    return `{${Object.keys(obj).slice(0, 2).map((k) => `${k}: ${fmtValue(obj[k])}`).join(", ")}}`;
+    const keys = Object.keys(obj);
+    const shown = keys.slice(0, 5).map((k) => `${k}: ${fmtValue(obj[k])}`).join(", ");
+    return `{${shown}${keys.length > 5 ? ", …" : ""}}`;
   }
   return fmtValue(v);
 }
@@ -95,7 +97,16 @@ function ruleSteps(
   for (const n of up.filter((x) => order[x.type] !== undefined).sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9))) {
     const f = n.fields;
     if (n.type === "lookup") {
-      out.push(<Step key={n.id} label={`lookup · ${f["table"]}[${substitute(String(f["key"]), action)}]`} value={fmtLookup(values.get(n.id))} kind="info" />);
+      const lv = values.get(n.id);
+      const empty = lv === null || lv === undefined;
+      out.push(
+        <Step
+          key={n.id}
+          label={`lookup · ${f["table"]}[${substitute(String(f["key"]), action)}]`}
+          value={empty ? "no row (not found / unreachable)" : fmtLookup(lv)}
+          kind={empty ? "no" : "info"}
+        />,
+      );
     } else if (n.type === "compare") {
       const src = inboundNodes(nodes, wires, n.id, "a")[0];
       const a = src !== undefined ? values.get(src.id) : undefined;
@@ -131,6 +142,7 @@ export function Inspector({
   onSaveTest,
   onConvertToRoute,
   onDeleteTest,
+  lookupLoading,
 }: {
   evaluation: Evaluation;
   onCommit: () => void;
@@ -141,6 +153,7 @@ export function Inspector({
   onSaveTest: (name: string, tx: unknown) => void;
   onConvertToRoute: (tx: unknown) => void;
   onDeleteTest: (name: string) => void;
+  lookupLoading: boolean;
 }) {
   const { state } = useGraph();
   const [showAdd, setShowAdd] = useState(false);
@@ -195,7 +208,7 @@ export function Inspector({
       </div>
 
       <div className="isec">
-        <h4>Evaluation trace</h4>
+        <h4>Evaluation trace{lookupLoading && <span className="lookupbusy"> · querying chain…</span>}</h4>
         <div className="trace">
           {!hasRules && <div className="gempty">Add Decision nodes wired to a Policy.</div>}
 

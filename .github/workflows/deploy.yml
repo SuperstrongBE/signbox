@@ -1,0 +1,140 @@
+# Release deploy — triggered by a `release/x.x.x` tag (or a manual run).
+#
+#   git tag release/1.2.3 && git push origin release/1.2.3
+#
+# Builds + tests + publishes the CLI (tarball on the GitHub Release AND an
+# install on the server), and builds + (re)starts the web container. The
+# version from the tag is stamped into package.json so `signbox --version`
+# matches the release.
+#
+# Secrets:   DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY
+# Variables: DEPLOY_PORT (default 22), DEPLOY_PATH (default ~/signbox)
+
+name: Release deploy
+
+on:
+  push:
+    tags:
+      - "release/*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Ref to deploy (e.g. release/1.2.3)"
+        required: false
+
+permissions:
+  contents: write # attach the tarball to the GitHub Release
+
+concurrency:
+  group: release-deploy
+  cancel-in-progress: false
+
+env:
+  DEPLOY_REF: ${{ github.event.inputs.ref || github.ref_name }}
+
+jobs:
+  cli:
+    name: CLI · build · publish · deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_REF }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Stamp version from the tag (so `signbox --version` matches)
+        run: |
+          VERSION="${DEPLOY_REF#release/}"
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.].*)?$ ]]; then
+            npm version "$VERSION" --no-git-tag-version --allow-same-version
+            echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          else
+            echo "ref '$DEPLOY_REF' is not release/x.x.x → keeping package.json version"
+            echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+          fi
+
+      - run: npm run build
+      - run: npm test
+
+      - name: Pack tarball (prebuilt dist inside)
+        run: npm pack # → signbox-$VERSION.tgz
+
+      - name: Attach to the GitHub Release
+        if: startsWith(env.DEPLOY_REF, 'release/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.DEPLOY_REF }}
+          name: signbox ${{ env.VERSION }}
+          files: signbox-*.tgz
+
+      - name: Copy tarball to the server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ vars.DEPLOY_PORT || '22' }}
+          source: "signbox-*.tgz"
+          target: "/tmp/signbox-deploy"
+
+      - name: Install the CLI on the server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ vars.DEPLOY_PORT || '22' }}
+          script: |
+            set -e
+            npm install -g /tmp/signbox-deploy/signbox-*.tgz
+            rm -f /tmp/signbox-deploy/signbox-*.tgz
+            echo "signbox is now $(signbox --version)"
+            # The RUNNING daemon keeps the old code until you restart it — that
+            # needs the keystore passphrase, so it's a manual step:
+            #   signbox daemon restart
+
+  web:
+    name: Web · build · deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_REF }}
+
+      - name: Package the web source
+        run: tar czf web.tgz -C web --exclude=node_modules --exclude=dist .
+
+      - name: Copy the web source to the server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ vars.DEPLOY_PORT || '22' }}
+          source: "web.tgz"
+          target: "/tmp/signbox-deploy"
+
+      - name: Build & (re)start the container
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ vars.DEPLOY_PORT || '22' }}
+          script: |
+            set -e
+            DEPLOY_PATH="${{ vars.DEPLOY_PATH || '~/signbox' }}"
+            DEPLOY_PATH="${DEPLOY_PATH/#\~/$HOME}"   # expand a leading ~
+            WEB_DIR="$DEPLOY_PATH/web"
+            mkdir -p "$WEB_DIR"
+            tar xzf /tmp/signbox-deploy/web.tgz -C "$WEB_DIR"
+            rm -f /tmp/signbox-deploy/web.tgz
+            cd "$WEB_DIR"
+            docker compose up -d --build
+            docker image prune -f

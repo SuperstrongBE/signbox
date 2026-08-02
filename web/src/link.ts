@@ -28,7 +28,6 @@ export interface OnboardPayload {
     authority: string;
     permission: string;
     publicKey: string;
-    mode: string;
   };
   actions: OnboardAction[];
 }

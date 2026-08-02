@@ -20,6 +20,7 @@ import { decompilePolicy } from "../editor/decompile";
 import { SAMPLES } from "../editor/samples";
 import { loadTestTxs, saveTestTx, deleteTestTx, txToSampleActions, TEST_CHAIN } from "../editor/testTx";
 import { buildScaffold } from "../editor/scaffold";
+import { collectLookupQueries, resolveLookups, canonForNode, type LookupEvidence } from "../editor/lookups";
 import { getPolicy } from "../chain/rpc";
 import { SIGNBOX_CONTRACT } from "../networks";
 import type { NodeType, SampleAction, TestTx } from "../editor/types";
@@ -129,10 +130,12 @@ interface LoadedPolicy {
 
 function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => void }) {
   const { state, dispatch } = useGraph();
-  const { chainId, network } = useNetwork();
+  const { chainId, network, endpoints } = useNetwork();
   const [modal, setModal] = useState<CompileResult | null>(null);
   const [customTxs, setCustomTxs] = useState<TestTx[]>(() => loadTestTxs(network));
   const [selected, setSelected] = useState<string>("builtin:0");
+  const [evidence, setEvidence] = useState<LookupEvidence>(new Map());
+  const [lookupLoading, setLookupLoading] = useState(false);
 
   // Refresh the saved tests when the target network changes.
   useEffect(() => {
@@ -140,9 +143,42 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
   }, [network]);
 
   const actions = useMemo(() => resolveActions(selected, customTxs), [selected, customTxs]);
+
+  // Lookup nodes hit the real chain: gather their resolved queries, fetch each
+  // once (debounced), and feed the evidence into the pure interpreter.
+  const queries = useMemo(() => collectLookupQueries(state.nodes, actions), [state.nodes, actions]);
+  const qsig = queries.map((q) => q.canon).sort().join("~");
+  useEffect(() => {
+    if (queries.length === 0) {
+      setEvidence(new Map());
+      setLookupLoading(false);
+      return;
+    }
+    let alive = true;
+    setLookupLoading(true);
+    const t = setTimeout(() => {
+      void resolveLookups(endpoints, queries).then((ev) => {
+        if (!alive) return;
+        setEvidence(ev);
+        setLookupLoading(false);
+      });
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qsig, network]);
+
+  const resolver = useCallback(
+    (fields: Record<string, string | boolean>, action: SampleAction) =>
+      evidence.get(canonForNode(fields, action))?.row ?? null,
+    [evidence],
+  );
+
   const evaluation = useMemo(
-    () => evaluateGraph(state.nodes, state.wires, actions),
-    [state.nodes, state.wires, actions],
+    () => evaluateGraph(state.nodes, state.wires, actions, resolver),
+    [state.nodes, state.wires, actions, resolver],
   );
 
   const onSaveTest = useCallback(
@@ -195,6 +231,7 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
         onSaveTest={onSaveTest}
         onConvertToRoute={onConvertToRoute}
         onDeleteTest={onDeleteTest}
+        lookupLoading={lookupLoading}
       />
       {modal !== null && (
         <PushModal compiled={modal} preselect={loaded.agent} onClose={() => setModal(null)} />

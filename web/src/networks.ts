@@ -15,6 +15,12 @@ export interface NetworkDescriptor {
   endpoints: string[];
   /** Explorer base URL for account/tx links. */
   explorer: string;
+  /**
+   * Signing-request scheme the XPR WebAuth wallet registers. It drives the
+   * deep link that opens the wallet app on mobile, so it MUST match the
+   * network (mainnet `proton`, testnet `proton-dev`) or the app won't open.
+   */
+  scheme: "proton" | "proton-dev";
 }
 
 export const NETWORKS: Record<NetworkName, NetworkDescriptor> = {
@@ -23,12 +29,14 @@ export const NETWORKS: Record<NetworkName, NetworkDescriptor> = {
     chainId: "384da888112027f0321850a169f737c33e53b388aad48b5adace4bab97f437e0",
     endpoints: ["https://proton.greymass.com", "https://proton.eosusa.io"],
     explorer: "https://explorer.xprnetwork.org",
+    scheme: "proton",
   },
   testnet: {
     network: "testnet",
     chainId: "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd",
     endpoints: ["https://testnet.protonchain.com", "https://test.proton.eosusa.io"],
     explorer: "https://testnet.explorer.xprnetwork.org",
+    scheme: "proton-dev",
   },
 };
 

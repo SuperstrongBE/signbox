@@ -70,7 +70,6 @@ export function OnboardingView({ payload }: { payload: OnboardPayload }) {
           <div><dt>Agent</dt><dd>{payload.summary.agent}</dd></div>
           <div><dt>Authority</dt><dd>{payload.summary.authority}</dd></div>
           <div><dt>Permission</dt><dd>{payload.summary.permission}</dd></div>
-          <div><dt>Mode</dt><dd>{payload.summary.mode}</dd></div>
           <div className="wide"><dt>Agent public key</dt><dd className="mono">{payload.summary.publicKey}</dd></div>
         </dl>
 
