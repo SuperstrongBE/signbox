@@ -43,7 +43,7 @@ const FLOW: { n: string; title: string; body: string }[] = [
   {
     n: "02",
     title: "Sign the setup",
-    body: "Scan the QR (or open the link) with your WebAuth wallet and sign the on-chain setup as the authority. You pay for the account; you stay in control.",
+    body: "Follow the link — or scan the QR — the CLI prints to open this web companion, then sign with your WebAuth wallet to create the agent's account on-chain. You pay for it; you stay the authority.",
   },
   {
     n: "03",
