@@ -92,6 +92,13 @@ jobs:
           port: ${{ vars.DEPLOY_PORT || '22' }}
           script: |
             set -e
+            # A non-interactive SSH shell skips ~/.bashrc/~/.profile, so a
+            # version-managed Node (nvm/fnm) is not on PATH. Load it first.
+            export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            command -v fnm >/dev/null 2>&1 && eval "$(fnm env)" >/dev/null 2>&1 || true
+            export PATH="$PATH:/usr/local/bin:/usr/bin:$HOME/.local/bin"
+            command -v npm >/dev/null 2>&1 || { echo "npm not found on the server (install Node, or add its bin dir to PATH above)"; exit 127; }
             npm install -g /tmp/signbox-deploy/signbox-*.tgz
             rm -f /tmp/signbox-deploy/signbox-*.tgz
             echo "signbox is now $(signbox --version)"
