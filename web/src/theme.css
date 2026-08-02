@@ -123,8 +123,10 @@
 /* ---------- agents view ---------- */
 .agents { height: 100%; overflow: auto; padding: 26px clamp(16px, 4vw, 44px); }
 .agents h1 { margin: 0 0 4px; font-size: 19px; font-weight: 640; letter-spacing: -0.2px; }
-.agents .sub { color: var(--mut); margin: 0 0 22px; font-size: 13px; }
+.agents .sub { color: var(--mut); margin: 0 0 16px; font-size: 13px; }
 .agents .sub code { font-family: var(--monoxs); color: var(--ink); }
+.agents .agentsnote { margin: 0 0 22px; padding: 11px 14px; background: #0c0e14; border: 1px solid var(--line); border-left: 2px solid var(--accent); color: var(--mut); font-size: 12.5px; line-height: 1.55; }
+.agents .agentsnote code { font-family: var(--monoxs); color: var(--ink); }
 .agentgrid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); max-width: 1240px; }
 .agentcard { background: linear-gradient(180deg, var(--panel2), var(--panel)); border: 1px solid var(--line); border-radius: 14px; padding: 16px 16px 14px; position: relative; overflow: hidden; }
 .agentcard:hover { border-color: var(--line2); }

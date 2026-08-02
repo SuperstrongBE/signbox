@@ -43,8 +43,8 @@ cd signbox && npm install && npm run build && npm link`}</Cmd>
 
         <Step n="02" title="Create the agent">
           <p>
-            This generates the agent’s key <b>inside the daemon</b> and prints a link + QR. Scan it with your
-            WebAuth wallet (or open the link), then sign the on-chain setup as the authority.
+            This generates the agent’s key <b>inside the daemon</b> — never on disk in the clear — and prints
+            a <b>link + QR</b> to authorize the account.
           </p>
           <Cmd>{`signbox agent create \\
   --agent myagent \\
@@ -53,12 +53,25 @@ cd signbox && npm install && npm run build && npm link`}</Cmd>
           <p className="gsnote">The private key never leaves the daemon — not this process, not the model.</p>
         </Step>
 
-        <Step n="03" title="Start the daemon">
+        <Step n="03" title="Sign to create the account">
+          <p>
+            Opening that link (or scanning the QR) lands on the <b>SignBox signing page</b>. Connect the{" "}
+            <b>authority’s</b> wallet and approve the transaction it shows: it <b>creates the agent’s account</b>{" "}
+            on-chain — its active key is the daemon-generated one — and registers an empty <b>deny-all</b>{" "}
+            policy. You pay for the account; the agent can’t sign anything until you add a policy.
+          </p>
+          <p className="gsnote">
+            The page signs exactly the actions in the link (they travel in the URL hash, client-side only). The
+            CLI then confirms the result on-chain before activating the key.
+          </p>
+        </Step>
+
+        <Step n="04" title="Start the daemon">
           <p>The daemon is what actually signs, gated by the on-chain policy. Keep it running.</p>
           <Cmd>{`signbox daemon start`}</Cmd>
         </Step>
 
-        <Step n="04" title="Author & push a policy">
+        <Step n="05" title="Author & push a policy">
           <p>
             Open <Link to="/my-agents">My agents</Link>, connect the authority’s wallet, and edit{" "}
             <code>myagent</code>. Draw the rules — recipients, caps, cooldowns, on-chain lookups — and{" "}
@@ -69,7 +82,7 @@ cd signbox && npm install && npm run build && npm link`}</Cmd>
 signbox transaction explain --agent myagent --transaction tx.json`}</Cmd>
         </Step>
 
-        <Step n="05" title="Let your agent spend">
+        <Step n="06" title="Let your agent spend">
           <p>
             Point your app at the <code>signbox</code> CLI: it submits a raw, unserialized transaction and
             gets back a signature or a refusal. See the Telegram agent in{" "}
