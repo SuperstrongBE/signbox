@@ -1,0 +1,22 @@
+# SignBox companion web — deployed by .github/workflows/deploy.yml on a
+# `release/x.x.x` tag.
+#
+# Conflict-free by construction:
+#  - `name: signbox`      → its own compose project + isolated network,
+#  - `container_name`     → a dedicated name, replaced on each `up -d`,
+#  - `127.0.0.1:8085:80`  → bound to localhost only, so it can't clash with a
+#                           public port and isn't reachable except through your
+#                           reverse proxy. Your nginx/Caddy fronts the domain
+#                           and proxies signbox.rockerone.io → 127.0.0.1:8085.
+#
+# Change 8085 if that port is already taken on the host.
+name: signbox
+
+services:
+  web:
+    build: .
+    image: signbox-web:latest
+    container_name: signbox-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8085:80"

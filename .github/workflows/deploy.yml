@@ -1,0 +1,118 @@
+# Release deploy — triggered by a `release/x.x.x` tag.
+#
+#   git tag release/1.2.3 && git push origin release/1.2.3
+#
+# It builds + tests + publishes the CLI (tarball on the GitHub Release AND an
+# install on the server), and builds + (re)starts the web container. The
+# version from the tag is stamped into package.json so `signbox --version`
+# matches the release.
+#
+# Required repo secrets:
+#   SSH_HOST         – server hostname/IP
+#   SSH_USER         – deploy user (the one that runs the daemon/containers)
+#   SSH_PRIVATE_KEY  – the private key already in GitHub (rename here if yours differs)
+
+name: Release deploy
+
+on:
+  push:
+    tags:
+      - "release/*"
+
+permissions:
+  contents: write # attach the tarball to the GitHub Release
+
+concurrency:
+  group: release-deploy
+  cancel-in-progress: false
+
+jobs:
+  cli:
+    name: CLI · build · publish · deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Derive version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"
+
+      - run: npm ci
+
+      - name: Stamp version (so `signbox --version` matches)
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - run: npm run build
+      - run: npm test
+
+      - name: Pack tarball (prebuilt dist inside)
+        run: npm pack # → signbox-$VERSION.tgz
+
+      - name: Attach to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: signbox ${{ env.VERSION }}
+          files: signbox-*.tgz
+
+      - name: Copy tarball to the server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "signbox-*.tgz"
+          target: "/tmp/signbox-deploy"
+
+      - name: Install the CLI on the server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            npm install -g /tmp/signbox-deploy/signbox-*.tgz
+            rm -f /tmp/signbox-deploy/signbox-*.tgz
+            echo "signbox is now $(signbox --version)"
+            # The RUNNING daemon keeps the old code until you restart it — that
+            # needs the keystore passphrase, so it's a manual step:
+            #   signbox daemon restart
+
+  web:
+    name: Web · build · deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package the web source
+        run: tar czf web.tgz -C web --exclude=node_modules --exclude=dist .
+
+      - name: Copy the web source to the server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "web.tgz"
+          target: "/tmp/signbox-deploy"
+
+      - name: Build & (re)start the container
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            APP_DIR="$HOME/signbox-web"
+            mkdir -p "$APP_DIR"
+            tar xzf /tmp/signbox-deploy/web.tgz -C "$APP_DIR"
+            rm -f /tmp/signbox-deploy/web.tgz
+            cd "$APP_DIR"
+            docker compose up -d --build
+            docker image prune -f
