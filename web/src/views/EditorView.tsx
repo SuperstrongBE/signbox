@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNetwork } from "../context/NetworkContext";
 import { GraphProvider, useGraph, type GraphState } from "../editor/store";
 import { HelpProvider, useHelp } from "../editor/help";
+import { EditorTour, TOUR_SEEN_KEY } from "../editor/EditorTour";
 import { GraphCanvas } from "../editor/GraphCanvas";
 import { Inspector } from "../editor/Inspector";
 import { PushModal } from "../editor/PushModal";
@@ -89,7 +90,7 @@ const PALETTE: { section: string; entries: PaletteEntry[] }[] = [
   },
 ];
 
-function Palette() {
+function Palette({ onReplayTour }: { onReplayTour: () => void }) {
   const { dispatch } = useGraph();
   const { open: openHelp } = useHelp();
   const add = (type: NodeType) =>
@@ -141,6 +142,9 @@ function Palette() {
         Wire <b>Transaction → Route If → conditions → Decision → Policy</b>. Ports are typed — only matching
         colors connect. Pick a sample tx in the inspector to watch it route.
       </p>
+      <button className="palettetour" onClick={onReplayTour} title="Replay the editor tour">
+        ↻ Editor tour
+      </button>
     </aside>
   );
 }
@@ -155,6 +159,22 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
   const { state, dispatch } = useGraph();
   const { chainId, network, endpoints } = useNetwork();
   const [modal, setModal] = useState<CompileResult | null>(null);
+  // First-run walkthrough — shown once (localStorage flag), replayable from the palette.
+  const [tourOpen, setTourOpen] = useState(() => {
+    try {
+      return localStorage.getItem(TOUR_SEEN_KEY) !== "1";
+    } catch {
+      return false;
+    }
+  });
+  const closeTour = () => {
+    setTourOpen(false);
+    try {
+      localStorage.setItem(TOUR_SEEN_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+  };
   const [customTxs, setCustomTxs] = useState<TestTx[]>(() => loadTestTxs(network));
   const [selected, setSelected] = useState<string>("builtin:0");
   const [evidence, setEvidence] = useState<LookupEvidence>(new Map());
@@ -243,7 +263,7 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
             </span>
           )}
         </div>
-        <Palette />
+        <Palette onReplayTour={() => setTourOpen(true)} />
         <GraphCanvas evaluation={evaluation} />
         <Inspector
           evaluation={evaluation}
@@ -260,6 +280,7 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
         {modal !== null && (
           <PushModal compiled={modal} preselect={loaded.agent} onClose={() => setModal(null)} />
         )}
+        {tourOpen && <EditorTour onClose={closeTour} />}
       </div>
     </HelpProvider>
   );
