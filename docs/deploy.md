@@ -19,16 +19,24 @@ The tag's version (`1.2.3`) is stamped into `package.json`, so on the server
 | **cli** | `npm ci` → stamp version → build → **test** → `npm pack` → attach the tarball to the GitHub Release → scp it to the server → `npm install -g` |
 | **web** | tar the `web/` source → scp to the server → `docker compose up -d --build` |
 
-## Required secrets
+## Secrets & variables
 
-Set these in **Settings → Secrets and variables → Actions** (rename in the
-workflow if your SSH key secret is named differently):
+In **Settings → Secrets and variables → Actions** (same names as the `railgun`
+project):
 
 | Secret | Value |
 |--------|-------|
-| `SSH_HOST` | server hostname or IP |
-| `SSH_USER` | the deploy user (the one that runs the daemon + containers) |
-| `SSH_PRIVATE_KEY` | the private key already stored in GitHub |
+| `DEPLOY_HOST` | server hostname or IP |
+| `DEPLOY_USER` | the deploy user (the one that runs the daemon + containers) |
+| `DEPLOY_SSH_KEY` | the private key already stored in GitHub |
+
+| Variable | Default | Value |
+|----------|---------|-------|
+| `DEPLOY_PORT` | `22` | SSH port |
+| `DEPLOY_PATH` | `~/signbox` | base dir on the server (web lands in `$DEPLOY_PATH/web`) |
+
+You can also deploy manually from the **Actions** tab (`workflow_dispatch`),
+optionally passing a `ref` like `release/1.2.3`.
 
 ## Why it won't clash with your other containers
 
