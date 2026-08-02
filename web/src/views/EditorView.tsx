@@ -8,8 +8,9 @@
  * chainId of the globally selected network.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNetwork } from "../context/NetworkContext";
+import { useWallet } from "../context/WalletContext";
 import { GraphProvider, useGraph, type GraphState } from "../editor/store";
 import { HelpProvider, useHelp } from "../editor/help";
 import { EditorTour, TOUR_SEEN_KEY } from "../editor/EditorTour";
@@ -17,13 +18,13 @@ import { GraphCanvas } from "../editor/GraphCanvas";
 import { Inspector } from "../editor/Inspector";
 import { PushModal } from "../editor/PushModal";
 import { evaluateGraph } from "../editor/eval";
-import { compilePolicy, type CompileResult } from "../editor/compile";
+import { compilePolicy, canonicalize, type CompileResult } from "../editor/compile";
 import { decompilePolicy } from "../editor/decompile";
 import { SAMPLES } from "../editor/samples";
 import { loadTestTxs, saveTestTx, deleteTestTx, txToSampleActions, TEST_CHAIN } from "../editor/testTx";
 import { buildScaffold } from "../editor/scaffold";
 import { collectLookupQueries, resolveLookups, canonForNode, type LookupEvidence } from "../editor/lookups";
-import { getPolicy } from "../chain/rpc";
+import { getPolicy, listPolicies } from "../chain/rpc";
 import { SIGNBOX_CONTRACT } from "../networks";
 import type { NodeType, SampleAction, TestTx } from "../editor/types";
 
@@ -97,6 +98,7 @@ function Palette({ onReplayTour }: { onReplayTour: () => void }) {
     dispatch({ type: "add-node", nodeType: type, x: 400 + Math.random() * 60, y: 200 + Math.random() * 60 });
   return (
     <aside className="palette">
+      <div className="palscroll">
       {PALETTE.map((group) => (
         <div key={group.section}>
           <h3>{group.section}</h3>
@@ -142,6 +144,7 @@ function Palette({ onReplayTour }: { onReplayTour: () => void }) {
         Wire <b>Transaction → Route If → conditions → Decision → Policy</b>. Ports are typed — only matching
         colors connect. Pick a sample tx in the inspector to watch it route.
       </p>
+      </div>
       <button className="palettetour" onClick={onReplayTour} title="Replay the editor tour">
         ↻ Editor tour
       </button>
@@ -155,9 +158,18 @@ interface LoadedPolicy {
   warnings: string[];
 }
 
-function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => void }) {
+function EditorInner({
+  loaded,
+  onBack,
+  onSwitch,
+}: {
+  loaded: LoadedPolicy;
+  onBack: () => void;
+  onSwitch: (agent: string) => void;
+}) {
   const { state, dispatch } = useGraph();
   const { chainId, network, endpoints } = useNetwork();
+  const { session } = useWallet();
   const [modal, setModal] = useState<CompileResult | null>(null);
   // First-run walkthrough — shown once (localStorage flag), replayable from the palette.
   const [tourOpen, setTourOpen] = useState(() => {
@@ -250,13 +262,71 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
     if (compiled !== null) setModal(compiled);
   }
 
+  // --- unsaved-changes guard (compares the compiled policy, so layout moves
+  //     don't count as edits; a successful push resets the baseline) ---
+  const currentCanon = useMemo(() => {
+    const compiled = compilePolicy(state.nodes, state.wires, chainId);
+    return compiled !== null ? canonicalize(compiled.policy) : "";
+  }, [state.nodes, state.wires, chainId]);
+  const baselineRef = useRef<string | null>(null);
+  if (baselineRef.current === null) baselineRef.current = currentCanon;
+  const dirty = currentCanon !== baselineRef.current;
+
+  const [confirmLeave, setConfirmLeave] = useState<(() => void) | null>(null);
+  const guard = (action: () => void) => {
+    if (dirty) setConfirmLeave(() => action);
+    else action();
+  };
+
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  // Agents the connected authority controls — for the switcher dropdown.
+  const [agentList, setAgentList] = useState<string[]>([loaded.agent]);
+  useEffect(() => {
+    let alive = true;
+    void listPolicies(endpoints, SIGNBOX_CONTRACT)
+      .then((rows) => {
+        if (!alive) return;
+        const mine = session !== null ? rows.filter((r) => r.authority === session.actor) : rows;
+        const names = mine.map((r) => r.agent);
+        setAgentList(names.includes(loaded.agent) ? names : [loaded.agent, ...names]);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [endpoints, session, loaded.agent]);
+
   return (
     <HelpProvider>
       <div className="editor">
         <div className="editbanner">
-          <button className="backbtn" onClick={onBack}>← Agents</button>
+          <button className="backbtn" onClick={() => guard(onBack)}>← Agents</button>
           <span className="ebsep" />
-          Editing <b className="mono">{loaded.agent}</b> · v{loaded.version} on {network}
+          Editing{" "}
+          <select
+            className="agentsel mono"
+            value={loaded.agent}
+            aria-label="Switch agent"
+            onChange={(e) => {
+              const a = e.target.value;
+              if (a !== loaded.agent) guard(() => onSwitch(a));
+            }}
+          >
+            {agentList.map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
+          </select>{" "}
+          · v{loaded.version} on {network}
+          {dirty && <span className="ebdirty" title="Unsaved policy changes">● unsaved</span>}
           {loaded.warnings.length > 0 && (
             <span className="ebwarn" title={loaded.warnings.join("\n")}>
               ⚠ {loaded.warnings.length} construct{loaded.warnings.length > 1 ? "s" : ""} not shown
@@ -278,11 +348,51 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
           lookupLoading={lookupLoading}
         />
         {modal !== null && (
-          <PushModal compiled={modal} preselect={loaded.agent} onClose={() => setModal(null)} />
+          <PushModal
+            compiled={modal}
+            preselect={loaded.agent}
+            onClose={() => setModal(null)}
+            onPushed={() => {
+              const c = compilePolicy(state.nodes, state.wires, chainId);
+              if (c !== null) baselineRef.current = canonicalize(c.policy);
+            }}
+          />
         )}
         {tourOpen && <EditorTour onClose={closeTour} />}
+        {confirmLeave !== null && (
+          <ConfirmLeave
+            onQuit={() => {
+              const go = confirmLeave;
+              setConfirmLeave(null);
+              go();
+            }}
+            onCancel={() => setConfirmLeave(null)}
+          />
+        )}
       </div>
     </HelpProvider>
+  );
+}
+
+function ConfirmLeave({ onQuit, onCancel }: { onQuit: () => void; onCancel: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+  return (
+    <div className="cfbg" onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div className="cfcard" role="dialog" aria-modal="true" aria-label="Unsaved changes">
+        <h3>Unsaved policy changes</h3>
+        <p>The policy has been modified. If you leave the editor without pushing it, you will lose your changes.</p>
+        <div className="cffoot">
+          <button className="ghostbtn" onClick={onCancel}>Cancel</button>
+          <button className="cfquit" onClick={onQuit}>Quit without pushing</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -291,7 +401,15 @@ type LoadState =
   | { kind: "error"; message: string }
   | { kind: "ready"; initial: GraphState; loaded: LoadedPolicy };
 
-export function EditorView({ agent, onBack }: { agent: string; onBack: () => void }) {
+export function EditorView({
+  agent,
+  onBack,
+  onSwitch,
+}: {
+  agent: string;
+  onBack: () => void;
+  onSwitch: (agent: string) => void;
+}) {
   const { network, endpoints } = useNetwork();
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
 
@@ -340,7 +458,7 @@ export function EditorView({ agent, onBack }: { agent: string; onBack: () => voi
   }
   return (
     <GraphProvider initial={load.initial}>
-      <EditorInner loaded={load.loaded} onBack={onBack} />
+      <EditorInner loaded={load.loaded} onBack={onBack} onSwitch={onSwitch} />
     </GraphProvider>
   );
 }

@@ -40,7 +40,12 @@ function Shell() {
         {route.name === "getting-started" && <GettingStartedView />}
         {route.name === "agents" && <AgentsView onEdit={(agent) => navigate(`/my-agents/${agent}`)} />}
         {route.name === "editor" && (
-          <EditorView key={route.agent} agent={route.agent} onBack={() => navigate("/my-agents")} />
+          <EditorView
+            key={route.agent}
+            agent={route.agent}
+            onBack={() => navigate("/my-agents")}
+            onSwitch={(agent) => navigate(`/my-agents/${agent}`)}
+          />
         )}
       </main>
       {isPage && <Footer />}
