@@ -201,7 +201,6 @@ export function GraphCanvas({ evaluation }: { evaluation: Evaluation }) {
     >
       <div className="toolbar">
         <button className="ghostbtn" onClick={tidy}>Auto-arrange</button>
-        <button className="ghostbtn" onClick={() => { dispatch({ type: "reset-demo" }); requestAnimationFrame(fitView); }}>Reset demo</button>
       </div>
       <div
         className="world"

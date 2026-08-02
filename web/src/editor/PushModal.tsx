@@ -31,10 +31,12 @@ export function PushModal({
   compiled,
   preselect,
   onClose,
+  onPushed,
 }: {
   compiled: CompileResult;
   preselect: string;
   onClose: () => void;
+  onPushed?: () => void;
 }) {
   const { network, endpoints, explorer } = useNetwork();
   const { session, connecting, openPicker } = useWallet();
@@ -100,6 +102,7 @@ export function PushModal({
         },
       ]);
       setPhase({ kind: "done", txid, version });
+      onPushed?.();
     } catch (error) {
       setPhase({ kind: "error", message: error instanceof Error ? error.message : String(error) });
     }

@@ -64,6 +64,11 @@ export function AgentsView({ onEdit }: { onEdit: (agent: string) => void }) {
         agent&apos;s daemon — what you manage here is the policy, not the secret.
       </p>
 
+      <div className="agentsnote">
+        To create a new agent wallet, use the CLI — <code className="mono">signbox agent create</code> — to
+        create the wallet, then follow the link it prints to sign and create the account on-chain.
+      </div>
+
       {state.kind === "loading" && <div className="state">Reading the {network} chain…</div>}
 
       {state.kind === "error" && (
