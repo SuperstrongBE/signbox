@@ -39,7 +39,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setError(null);
       try {
         const desc = NETWORKS[network];
-        setSession(await connectNetwork(desc.endpoints, desc.chainId, SIGNBOX_CONTRACT));
+        setSession(await connectNetwork(desc.endpoints, desc.chainId, SIGNBOX_CONTRACT, desc.scheme));
         setPickerOpen(false);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));

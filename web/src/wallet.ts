@@ -15,7 +15,9 @@ export interface Connected {
 }
 
 export async function connect(payload: OnboardPayload): Promise<Connected> {
-  return openSession(payload.endpoints, payload.chainId, payload.signboxContract);
+  // Onboarding brings its own network; pick the wallet scheme to match.
+  const scheme = payload.network === "mainnet" ? "proton" : "proton-dev";
+  return openSession(payload.endpoints, payload.chainId, payload.signboxContract, scheme);
 }
 
 /** Open a wallet session for the selected network (used by the policy editor). */
@@ -23,13 +25,21 @@ export async function connectNetwork(
   endpoints: string[],
   chainId: string,
   requestAccount: string,
+  scheme: "proton" | "proton-dev",
 ): Promise<Connected> {
-  return openSession(endpoints, chainId, requestAccount);
+  return openSession(endpoints, chainId, requestAccount, scheme);
 }
 
-async function openSession(endpoints: string[], chainId: string, requestAccount: string): Promise<Connected> {
+async function openSession(
+  endpoints: string[],
+  chainId: string,
+  requestAccount: string,
+  scheme: "proton" | "proton-dev",
+): Promise<Connected> {
+  // `scheme` drives the deep link that opens the WebAuth app on mobile; it MUST
+  // match the network or the app never opens (the desktop QR is more forgiving).
   const { session, link } = await ConnectWallet({
-    linkOptions: { endpoints, chainId, restoreSession: false },
+    linkOptions: { endpoints, chainId, scheme, restoreSession: false },
     transportOptions: { requestAccount, requestStatus: true },
   });
 
