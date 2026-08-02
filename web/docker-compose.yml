@@ -1,15 +1,14 @@
 # SignBox companion web — deployed by .github/workflows/deploy.yml on a
-# `release/x.x.x` tag.
+# `release/x.x.x` tag, to its OWN dedicated host.
 #
-# Conflict-free by construction:
-#  - `name: signbox`      → its own compose project + isolated network,
-#  - `container_name`     → a dedicated name, replaced on each `up -d`,
-#  - `127.0.0.1:8085:80`  → bound to localhost only, so it can't clash with a
-#                           public port and isn't reachable except through your
-#                           reverse proxy. Your nginx/Caddy fronts the domain
-#                           and proxies signbox.rockerone.io → 127.0.0.1:8085.
+# The container is Caddy: it serves the built SPA AND terminates TLS, owning
+# :80/:443 directly. No external reverse proxy — this box only runs signbox.
+# Caddy provisions the Let's Encrypt certificate for $DOMAIN automatically;
+# the `caddy_data` volume persists it across redeploys (so we don't re-issue
+# and hit Let's Encrypt rate limits on every deploy).
 #
-# Change 8085 if that port is already taken on the host.
+# Prereqs on the host: Docker + ports 80/443 open, and the DNS A record of
+# $DOMAIN pointing here.
 name: signbox
 
 services:
@@ -18,5 +17,15 @@ services:
     image: signbox-web:latest
     container_name: signbox-web
     restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-signbox.rockerone.io}
     ports:
-      - "127.0.0.1:8085:80"
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

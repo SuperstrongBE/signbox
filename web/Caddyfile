@@ -1,0 +1,16 @@
+# DOMAIN is injected at runtime (deploy/docker-compose.yml sets it). With a
+# public A record + ports 80/443 open, Caddy provisions a Let's Encrypt
+# certificate automatically. Unset → localhost (internal cert, for local runs).
+{$DOMAIN:localhost} {
+	encode zstd gzip
+	root * /srv
+
+	# Vite emits content-hashed files under /assets — safe to cache forever.
+	@assets path /assets/*
+	header @assets Cache-Control "public, immutable, max-age=31536000"
+
+	# SPA: every other path falls back to index.html (the onboarding payload
+	# lives in the URL hash, which never reaches the server anyway).
+	try_files {path} /index.html
+	file_server
+}
