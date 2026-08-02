@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNetwork } from "../context/NetworkContext";
 import { GraphProvider, useGraph, type GraphState } from "../editor/store";
+import { HelpProvider, useHelp } from "../editor/help";
 import { GraphCanvas } from "../editor/GraphCanvas";
 import { Inspector } from "../editor/Inspector";
 import { PushModal } from "../editor/PushModal";
@@ -90,26 +91,48 @@ const PALETTE: { section: string; entries: PaletteEntry[] }[] = [
 
 function Palette() {
   const { dispatch } = useGraph();
+  const { open: openHelp } = useHelp();
+  const add = (type: NodeType) =>
+    dispatch({ type: "add-node", nodeType: type, x: 400 + Math.random() * 60, y: 200 + Math.random() * 60 });
   return (
     <aside className="palette">
       {PALETTE.map((group) => (
         <div key={group.section}>
           <h3>{group.section}</h3>
           {group.entries.map((entry) => (
-            <button
+            <div
               key={entry.type}
               className="pbtn"
+              role="button"
+              tabIndex={0}
               style={{ ["--c" as string]: entry.color }}
               draggable
               onDragStart={(e) => {
                 e.dataTransfer.setData("text/plain", entry.type);
                 e.dataTransfer.effectAllowed = "copy";
               }}
-              onClick={() => dispatch({ type: "add-node", nodeType: entry.type, x: 400 + Math.random() * 60, y: 200 + Math.random() * 60 })}
+              onClick={() => add(entry.type)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  add(entry.type);
+                }
+              }}
             >
               <span className="sw" />
-              {entry.label}
-            </button>
+              <span className="pl">{entry.label}</span>
+              <button
+                className="pq"
+                aria-label={`Help for ${entry.label}`}
+                title="What is this node?"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openHelp(entry.type);
+                }}
+              >
+                ?
+              </button>
+            </div>
           ))}
         </div>
       ))}
@@ -208,35 +231,37 @@ function EditorInner({ loaded, onBack }: { loaded: LoadedPolicy; onBack: () => v
   }
 
   return (
-    <div className="editor">
-      <div className="editbanner">
-        <button className="backbtn" onClick={onBack}>← Agents</button>
-        <span className="ebsep" />
-        Editing <b className="mono">{loaded.agent}</b> · v{loaded.version} on {network}
-        {loaded.warnings.length > 0 && (
-          <span className="ebwarn" title={loaded.warnings.join("\n")}>
-            ⚠ {loaded.warnings.length} construct{loaded.warnings.length > 1 ? "s" : ""} not shown
-          </span>
+    <HelpProvider>
+      <div className="editor">
+        <div className="editbanner">
+          <button className="backbtn" onClick={onBack}>← Agents</button>
+          <span className="ebsep" />
+          Editing <b className="mono">{loaded.agent}</b> · v{loaded.version} on {network}
+          {loaded.warnings.length > 0 && (
+            <span className="ebwarn" title={loaded.warnings.join("\n")}>
+              ⚠ {loaded.warnings.length} construct{loaded.warnings.length > 1 ? "s" : ""} not shown
+            </span>
+          )}
+        </div>
+        <Palette />
+        <GraphCanvas evaluation={evaluation} />
+        <Inspector
+          evaluation={evaluation}
+          onCommit={onCommit}
+          selected={selected}
+          onSelect={setSelected}
+          customTxs={customTxs}
+          network={network}
+          onSaveTest={onSaveTest}
+          onConvertToRoute={onConvertToRoute}
+          onDeleteTest={onDeleteTest}
+          lookupLoading={lookupLoading}
+        />
+        {modal !== null && (
+          <PushModal compiled={modal} preselect={loaded.agent} onClose={() => setModal(null)} />
         )}
       </div>
-      <Palette />
-      <GraphCanvas evaluation={evaluation} />
-      <Inspector
-        evaluation={evaluation}
-        onCommit={onCommit}
-        selected={selected}
-        onSelect={setSelected}
-        customTxs={customTxs}
-        network={network}
-        onSaveTest={onSaveTest}
-        onConvertToRoute={onConvertToRoute}
-        onDeleteTest={onDeleteTest}
-        lookupLoading={lookupLoading}
-      />
-      {modal !== null && (
-        <PushModal compiled={modal} preselect={loaded.agent} onClose={() => setModal(null)} />
-      )}
-    </div>
+    </HelpProvider>
   );
 }
 

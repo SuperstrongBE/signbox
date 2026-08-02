@@ -10,6 +10,7 @@ import { PORT_TOP, PORT_GAP } from "./types";
 import { SPECS, nodeColor } from "./nodeSpecs";
 import { NodeBody } from "./nodeBodies";
 import { useGraph } from "./store";
+import { useHelp } from "./help";
 
 const TYPE_COLOR: Record<string, string> = {
   tx: "var(--tx)",
@@ -40,6 +41,7 @@ export const GraphNodeView = memo(function GraphNodeView({
   onPortPointerDown,
 }: GraphNodeProps) {
   const { dispatch } = useGraph();
+  const { open: openHelp } = useHelp();
   const spec = SPECS[node.type];
   const color = nodeColor(node.type, node.fields);
   const title = node.type === "decision" ? `Decision · ${String(node.fields["effect"])}` : spec.title;
@@ -58,6 +60,18 @@ export const GraphNodeView = memo(function GraphNodeView({
         <span className="sw" />
         <span className="ttl">{title}</span>
         {badge !== "" && <span className="bdg">{badge}</span>}
+        <button
+          className="qh"
+          aria-label={`Help for ${spec.title}`}
+          title="What is this node?"
+          onClick={(e) => {
+            e.stopPropagation();
+            openHelp(node.type);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          ?
+        </button>
         {spec.single !== true && (
           <button
             className="x"

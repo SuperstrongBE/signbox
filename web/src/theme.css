@@ -162,9 +162,13 @@
 .palette { background: var(--panel); border-right: 1px solid var(--line); padding: 13px 11px; overflow: auto; }
 .palette h3 { font-size: 10px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--mut2); margin: 0 0 8px; font-weight: 650; }
 .palette h3:not(:first-child) { margin-top: 15px; }
-.pbtn { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: var(--panel2); border: 1px solid var(--line); padding: 7px 9px; margin-bottom: 6px; font-size: 12px; font-weight: 550; }
+.pbtn { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: var(--panel2); border: 1px solid var(--line); padding: 7px 9px; margin-bottom: 6px; font-size: 12px; font-weight: 550; cursor: grab; }
 .pbtn:hover { background: var(--panel3); border-color: var(--line2); }
 .pbtn .sw { width: 8px; height: 8px; border-radius: 2px; background: var(--c, var(--accent)); flex: none; }
+.pbtn .pl { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pbtn .pq { flex: none; width: 16px; height: 16px; display: grid; place-items: center; font-size: 10px; font-weight: 700; line-height: 1; padding: 0; background: #0d1017; border: 1px solid var(--line2); color: var(--mut2); cursor: pointer; opacity: 0; }
+.pbtn:hover .pq, .pbtn:focus-within .pq { opacity: 1; }
+.pbtn .pq:hover { border-color: var(--accent); color: var(--accent); }
 .palette .hint { color: var(--mut2); font-size: 10.5px; line-height: 1.5; margin-top: 13px; }
 .palette .hint b { color: var(--mut); }
 
@@ -195,7 +199,9 @@
 .gnode.skipdim { opacity: 0.42; }
 .gnode .hd { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-bottom: 1px solid var(--line2); cursor: grab; }
 .gnode .hd .sw { width: 8px; height: 8px; border-radius: 2px; background: var(--c, var(--accent)); box-shadow: 0 0 8px -1px var(--c, var(--accent)); flex: none; }
-.gnode .hd .ttl { font-weight: 620; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gnode .hd .ttl { flex: 1; font-weight: 620; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gnode .hd .qh { flex: none; width: 17px; height: 17px; display: grid; place-items: center; font-size: 10.5px; font-weight: 700; line-height: 1; padding: 0; background: #0d1017; border: 1px solid var(--line2); color: var(--mut2); }
+.gnode .hd .qh:hover { border-color: var(--accent); color: var(--accent); }
 .gnode .hd .bdg { margin-left: auto; font-family: var(--monoxs); font-size: 9px; padding: 1px 5px; border-radius: 4px; background: #0a0c11; color: var(--mut); max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gnode .hd .x { margin-left: 6px; color: var(--mut2); font-size: 14px; line-height: 1; background: none; border: 0; padding: 0 2px; }
 .gnode .hd .x:hover { color: var(--deny); }
@@ -419,10 +425,48 @@
   .footmut { order: 3; flex: 0 0 100%; min-width: 0; }
 }
 
+/* ---------- node help modal (the `?`) ---------- */
+.nhbg { position: fixed; inset: 0; background: #06080ccc; backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; padding: 22px; z-index: 60; }
+.nhcard { width: min(760px, 100%); max-height: 90vh; overflow: auto; background: var(--panel); border: 1px solid var(--line2); box-shadow: 0 30px 80px -20px #000, 0 0 0 1px #0006; }
+.nhtop { display: flex; align-items: center; gap: 11px; padding: 16px 18px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
+.nhtop .nhsw { width: 12px; height: 12px; background: var(--c); box-shadow: 0 0 10px -1px var(--c); flex: none; }
+.nhtop h2 { margin: 0; font-size: 20px; letter-spacing: -0.3px; font-weight: 660; }
+.nhchip { font-family: var(--monoxs); font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 40%, var(--line2)); padding: 3px 8px; }
+.nhx { margin-left: auto; width: 28px; height: 28px; display: grid; place-items: center; font-size: 19px; background: none; border: 1px solid var(--line2); color: var(--mut); }
+.nhx:hover { border-color: var(--deny); color: var(--deny); }
+.nhsub { padding: 14px 18px 0; margin: 0; color: var(--mut); max-width: 64ch; line-height: 1.55; }
+.nhgrid { display: grid; grid-template-columns: 220px 1fr; gap: 20px; padding: 18px; }
+@media (max-width: 640px) { .nhgrid { grid-template-columns: 1fr; } }
+.nhschem { align-self: start; }
+.nhcap { margin: 0 0 8px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--mut2); }
+.nhnode { border: 1px solid var(--line2); background: linear-gradient(180deg, var(--panel2), var(--panel)); }
+.nhhd { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-bottom: 1px solid var(--line2); background: color-mix(in srgb, var(--c) 15%, var(--panel2)); }
+.nhsw2 { width: 9px; height: 9px; background: var(--c); box-shadow: 0 0 8px -1px var(--c); flex: none; }
+.nhttl { flex: 1; font-weight: 600; font-size: 12.5px; }
+.nhq { width: 17px; height: 17px; display: grid; place-items: center; font-size: 10.5px; font-weight: 700; background: #0d1017; border: 1px solid var(--line2); color: var(--mut2); }
+.nhbody { padding: 8px 9px; display: flex; flex-direction: column; gap: 6px; }
+.nhprow { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--mut); font-family: var(--monoxs); }
+.nhprow.out { justify-content: flex-end; text-align: right; }
+.nhdot { width: 9px; height: 9px; background: var(--panel3); border: 2px solid var(--pc); flex: none; }
+.nhsect { margin: 0 0 18px; }
+.nhsect h3 { margin: 0 0 9px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--mut2); font-weight: 650; }
+.nhitem { display: flex; gap: 9px; padding: 8px 0; border-top: 1px solid var(--line); }
+.nhitem:first-of-type { border-top: 0; padding-top: 0; }
+.nhidot { width: 9px; height: 9px; margin-top: 5px; background: var(--panel3); border: 2px solid var(--pc); flex: none; }
+.nhcol { min-width: 0; }
+.nhk { font-family: var(--monoxs); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.nhbadge { font-family: var(--monoxs); font-size: 9.5px; color: var(--pc); border: 1px solid color-mix(in srgb, var(--pc) 45%, var(--line2)); padding: 1px 5px; margin-left: 6px; }
+.nhrng { font-family: var(--monoxs); font-size: 10.5px; color: var(--mut2); }
+.nhd { color: var(--mut); font-size: 12.5px; line-height: 1.5; margin-top: 2px; }
+.nhnote { margin: 0 18px 20px; padding: 12px 14px; background: #0c0e14; border: 1px solid var(--line); border-left: 2px solid var(--accent); color: var(--mut); font-size: 12.5px; line-height: 1.6; }
+.nhnote b { color: var(--ink); font-weight: 600; }
+
 /* ---------- squared aesthetic: no rounded rectangles, only round indicators ---------- */
 .appshell *, .appshell *::before, .appshell *::after { border-radius: 0 !important; }
 .appshell .gport,
 .appshell .netcarddot,
 .appshell .netdot,
 .appshell .wdot,
+.appshell .nhdot,
+.appshell .nhidot,
 .appshell .legend i { border-radius: 50% !important; }
