@@ -79,6 +79,14 @@ export function LandingView() {
         </p>
         <div className="herocta">
           <Link to="/getting-started" className="btn primary">Get started →</Link>
+          <a
+            className="btn ghost"
+            href="https://github.com/SuperstrongBE/signbox/releases"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Download the CLI ↗
+          </a>
           <Link to="/my-agents" className="btn ghost">My agents</Link>
         </div>
       </section>
