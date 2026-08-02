@@ -6,10 +6,10 @@
  * Switching network = disconnect + reconnect. SignBox never sees a key.
  */
 
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNetwork } from "./NetworkContext";
 import { NETWORKS, SIGNBOX_CONTRACT, type NetworkName } from "../networks";
-import { connectNetwork, type Connected } from "../wallet";
+import { connectNetwork, restoreNetwork, type Connected } from "../wallet";
 
 interface WalletState {
   session: Connected | null;
@@ -26,11 +26,28 @@ interface WalletState {
 const WalletContext = createContext<WalletState | null>(null);
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const { setNetwork } = useNetwork();
+  const { network, setNetwork } = useNetwork();
   const [session, setSession] = useState<Connected | null>(null);
   const [connecting, setConnecting] = useState<NetworkName | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  // Re-hydrate a persisted session on mount. On mobile the WebAuth app returns
+  // via a callback that RELOADS the page, so the connection completed but the
+  // fresh JS context lost the in-flight promise; restoring repopulates the UI.
+  // Silent (no picker) when there's nothing stored.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    restored.current = true;
+    const desc = NETWORKS[network];
+    void restoreNetwork(desc.endpoints, desc.chainId, SIGNBOX_CONTRACT, desc.scheme)
+      .then((c) => {
+        if (c !== null) setSession(c);
+      })
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const connect = useCallback(
     async (network: NetworkName) => {

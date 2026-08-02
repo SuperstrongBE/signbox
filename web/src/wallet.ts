@@ -3,6 +3,11 @@
  * SESSION (login), which is what the Proton wallet requires before signing —
  * exactly the piece a headless CLI cannot do. SignBox never sees any key here;
  * the authority signs in their own wallet.
+ *
+ * Mobile note: the WebAuth app returns to the browser via a callback URL, which
+ * RELOADS the page — the in-flight ConnectWallet promise is lost, but the SDK
+ * has persisted the session. `restoreNetwork` re-hydrates it on mount so the UI
+ * reflects the connection after the round-trip.
  */
 
 import ConnectWallet from "@proton/web-sdk";
@@ -17,17 +22,35 @@ export interface Connected {
 export async function connect(payload: OnboardPayload): Promise<Connected> {
   // Onboarding brings its own network; pick the wallet scheme to match.
   const scheme = payload.network === "mainnet" ? "proton" : "proton-dev";
-  return openSession(payload.endpoints, payload.chainId, payload.signboxContract, scheme);
+  const c = await openSession(payload.endpoints, payload.chainId, payload.signboxContract, scheme, false);
+  if (c === null) throw new Error("wallet connection was cancelled");
+  return c;
 }
 
-/** Open a wallet session for the selected network (used by the policy editor). */
+/** Open a wallet session for the selected network (explicit connect). */
 export async function connectNetwork(
   endpoints: string[],
   chainId: string,
   requestAccount: string,
   scheme: "proton" | "proton-dev",
 ): Promise<Connected> {
-  return openSession(endpoints, chainId, requestAccount, scheme);
+  const c = await openSession(endpoints, chainId, requestAccount, scheme, false);
+  if (c === null) throw new Error("wallet connection was cancelled");
+  return c;
+}
+
+/**
+ * Silently restore a persisted session (no wallet UI). Returns null when there
+ * is nothing to restore. Used on mount so a mobile round-trip that reloaded the
+ * page still shows the connection.
+ */
+export async function restoreNetwork(
+  endpoints: string[],
+  chainId: string,
+  requestAccount: string,
+  scheme: "proton" | "proton-dev",
+): Promise<Connected | null> {
+  return openSession(endpoints, chainId, requestAccount, scheme, true);
 }
 
 async function openSession(
@@ -35,24 +58,31 @@ async function openSession(
   chainId: string,
   requestAccount: string,
   scheme: "proton" | "proton-dev",
-): Promise<Connected> {
-  // `scheme` drives the deep link that opens the WebAuth app on mobile; it MUST
-  // match the network or the app never opens (the desktop QR is more forgiving).
-  const { session, link } = await ConnectWallet({
-    linkOptions: { endpoints, chainId, scheme, restoreSession: false },
-    transportOptions: { requestAccount, requestStatus: true },
-  });
+  restore: boolean,
+): Promise<Connected | null> {
+  // `scheme` drives the deep link that opens the WebAuth app on mobile; it must
+  // match the network. restoreSession:true is a silent re-hydrate — the SDK
+  // returns no session (never a picker) when there's nothing stored.
+  let ret: Awaited<ReturnType<typeof ConnectWallet>>;
+  try {
+    ret = await ConnectWallet({
+      linkOptions: { endpoints, chainId, scheme, restoreSession: restore },
+      transportOptions: { requestAccount, requestStatus: true },
+    });
+  } catch (error) {
+    if (restore) return null;
+    throw error;
+  }
 
+  const { session, link } = ret;
   if (session === undefined) {
+    if (restore) return null;
     throw new Error("wallet connection was cancelled");
   }
 
-  const actor = session.auth.actor.toString();
-  const permission = session.auth.permission.toString();
-
   return {
-    actor,
-    permission,
+    actor: session.auth.actor.toString(),
+    permission: session.auth.permission.toString(),
     transact: async (actions: OnboardAction[]) => {
       const result = (await session.transact(
         { actions },
