@@ -15,14 +15,14 @@ import { JsonRpc, Numeric } from "@proton/js";
 // bare specifier breaks under Node ESM; import the ESM build directly.
 import { SigningRequest } from "@proton/signing-request/lib/proton-signing-request.m.js";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
-import { pinChainId } from "../chains/xpr/adapter.js";
-import { buildOnboardingActions, summarizeActions } from "./actions.js";
+import { pinChainId } from "./adapter.js";
+import { buildOnboardingActions, summarizeActions } from "./onboardingActions.js";
 import type {
   BuiltRequest,
   OnboardingBackend,
   OnboardingInput,
   VerificationResult,
-} from "./flow.js";
+} from "../../onboarding/flow.js";
 
 export interface XprOnboardingOptions {
   endpoints: string[];

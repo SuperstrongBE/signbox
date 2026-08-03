@@ -12,10 +12,10 @@ import { XprTransactionSigner, pinChainId } from "./adapter.js";
 import { decodeXprTransaction } from "./decode.js";
 import { generateK1KeyPair } from "./keygen.js";
 import { XPR_CHAIN, XPR_NETWORKS } from "./networks.js";
-import { XprTransactionBroadcaster } from "../../daemon/broadcaster.js";
-import { XprChainReadRelay } from "../../daemon/chainRelay.js";
-import { ChainPolicyReader } from "../../daemon/chainPolicyReader.js";
-import { XprOnboardingBackend } from "../../onboarding/xprBackend.js";
+import { XprTransactionBroadcaster } from "./broadcaster.js";
+import { XprChainReadRelay } from "./relay.js";
+import { XprPolicyReader } from "./policyReader.js";
+import { XprOnboardingBackend } from "./onboarding.js";
 import type { ChainModule, ChainWiring, PrivateKeyProvider } from "../registry.js";
 
 const ONBOARDING_SCHEMES = ["esr", "proton", "proton-dev"] as const;
@@ -44,7 +44,7 @@ export const xprModule: ChainModule = {
   },
 
   createPolicyReader(wiring: ChainWiring, registryLocator: string) {
-    return new ChainPolicyReader({ ...wiring, contractAccount: registryLocator });
+    return new XprPolicyReader({ ...wiring, contractAccount: registryLocator });
   },
 
   createOnboardingBackend(wiring: ChainWiring, registryLocator: string, options = {}) {
