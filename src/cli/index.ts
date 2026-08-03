@@ -22,20 +22,16 @@ import { Command } from "commander";
 import { createRequire } from "node:module";
 import { readFileSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { JsonRpc } from "@proton/js";
 import { getChain, registeredChains } from "../chains/index.js";
 import { runOnboarding, type BuiltRequest } from "../onboarding/flow.js";
 import { promoteKeystoreFile, destroyKeystoreFile } from "../keystore/encryptedFile.js";
 import qrcodeTerminal from "qrcode-terminal";
-// A.3 (config generalization) will fold doctor's raw RPC checks into the
-// chain module; until then they stay Antelope-direct.
-import { pinChainId } from "../chains/xpr/adapter.js";
 import { createKeystoreFile } from "../keystore/encryptedFile.js";
 import { validatePolicy } from "../core/policy/schema.js";
 import { verifyStoredPolicy } from "../core/policy/onchain.js";
 import { evaluatePolicy, collectProviderQueries } from "../core/policy/engine.js";
 import { resolveProviders } from "../daemon/providerResolver.js";
-import { DEFAULT_CONFIG_PATH, expandPath, loadConfig, chainContextOf } from "./config.js";
+import { DEFAULT_CONFIG_PATH, DEFAULT_CHAIN, expandPath, loadConfig, chainContextOf } from "./config.js";
 import { promptPassphrase } from "./passphrase.js";
 import { isInteractive, promptText, promptSelect, validateAccountName } from "./prompt.js";
 import { adminCommand, readToken, readViaDaemon, signViaDaemon } from "./client.js";
@@ -58,10 +54,10 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-// The CLI operates on one chain per invocation; until config generalization
-// (issue #44, A.3) that chain is XPR. Every chain-specific implementation is
-// still resolved through the registry — this is the ONLY place naming it.
-const CLI_CHAIN = "XPR";
+// Commands that take only --network (no config file) operate on the default
+// chain; commands that load a config follow `config.chain`. Implementations
+// always resolve through the registry.
+const CLI_CHAIN = DEFAULT_CHAIN;
 
 function contextFor(network: string): ChainContext {
   const module = getChain(CLI_CHAIN);
@@ -113,16 +109,16 @@ program
 
       push("daemon socket", existsSync(config.socketPath), config.socketPath);
 
+      const doctorModule = getChain(config.chain);
+      const wiring = { endpoints: config.endpoints, chainId: config.chainId };
       try {
-        const rpc = new JsonRpc(config.endpoints);
-        pinChainId(rpc, config.chainId);
-        const info = (await Promise.race([
-          rpc.get_info(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 7000)),
-        ])) as { head_block_time?: string };
+        const { headTimeMs } = (await Promise.race([
+          doctorModule.checkEndpoint(wiring),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 7000)),
+        ])) as { headTimeMs?: number };
         push("rpc + pinned chain id", true, config.endpoints[0]);
-        if (info.head_block_time !== undefined) {
-          const skew = Math.abs(Date.now() - Date.parse(`${info.head_block_time}Z`));
+        if (headTimeMs !== undefined) {
+          const skew = Math.abs(Date.now() - headTimeMs);
           push("clock within 30s of chain head", skew < 30_000, `${Math.round(skew / 1000)}s`);
         }
       } catch (error) {
@@ -130,9 +126,7 @@ program
       }
 
       try {
-        const rpc = new JsonRpc(config.endpoints);
-        pinChainId(rpc, config.chainId);
-        await rpc.get_abi(config.signboxContract);
+        await doctorModule.checkPolicyRegistry(wiring, config.signboxContract);
         push(`signbox contract ${config.signboxContract}`, true, "deployed");
       } catch {
         push(`signbox contract ${config.signboxContract}`, false, "not reachable / not deployed");

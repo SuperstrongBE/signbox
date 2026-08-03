@@ -25,6 +25,11 @@ export const xprModule: ChainModule = {
   chain: XPR_CHAIN,
   networks: XPR_NETWORKS,
 
+  // Antelope chain ids are 64 lowercase hex; the policy registry is hosted by
+  // an Antelope account (a-z, 1-5, dots, ≤ 12 chars).
+  chainIdPattern: /^[0-9a-f]{64}$/,
+  registryLocatorPattern: /^[a-z1-5.]{1,12}$/,
+
   decode(input: unknown, context: ChainContext): DecodedTransaction {
     return decodeXprTransaction(input, context);
   },
@@ -75,5 +80,20 @@ export const xprModule: ChainModule = {
       signatures: payload.signatures,
       serializedTransaction: Uint8Array.from(Buffer.from(payload.packedTransaction, "hex")),
     });
+  },
+
+  async checkEndpoint(wiring: ChainWiring): Promise<{ headTimeMs?: number }> {
+    const rpc = new JsonRpc(wiring.endpoints);
+    pinChainId(rpc, wiring.chainId);
+    const info = (await rpc.get_info()) as { head_block_time?: string };
+    return info.head_block_time !== undefined
+      ? { headTimeMs: Date.parse(`${info.head_block_time}Z`) }
+      : {};
+  },
+
+  async checkPolicyRegistry(wiring: ChainWiring, registryLocator: string): Promise<void> {
+    const rpc = new JsonRpc(wiring.endpoints);
+    pinChainId(rpc, wiring.chainId);
+    await rpc.get_abi(registryLocator); // throws when the contract isn't deployed
   },
 };
