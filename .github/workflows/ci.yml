@@ -1,3 +1,13 @@
+# CI — quality gates for every package (#43).
+#
+# Three packages, three jobs:
+#   core     — the CLI/daemon (typecheck + tests + production build), Node 22/24
+#   web      — the companion SPA (tsc -b + vite build)
+#   contract — the AssemblyScript signbox contract (proton-asc build + vert tests)
+#
+# `npm ci` is the lockfile gate on all three: it fails on any package.json /
+# package-lock.json drift and never mutates the lockfile.
+
 name: CI
 
 on:
@@ -9,8 +19,8 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    name: Typecheck & test (Node ${{ matrix.node }})
+  core:
+    name: Core · typecheck · test · build (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -26,11 +36,62 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
-      - name: Install dependencies
+      - name: Install dependencies (lockfile-strict)
         run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
 
       - name: Test
+        run: npm test
+
+      - name: Build (production)
+        run: npm run build
+
+  web:
+    name: Web · typecheck · build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies (lockfile-strict)
+        working-directory: web
+        run: npm ci
+
+      - name: Typecheck & build
+        working-directory: web
+        run: npm run build # tsc -b (typecheck) + vite build
+
+  contract:
+    name: Contract · build · test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: contract/package-lock.json
+
+      - name: Install dependencies (lockfile-strict)
+        working-directory: contract
+        run: npm ci
+
+      - name: Build (proton-asc)
+        working-directory: contract
+        run: npm run build
+
+      - name: Test (vert simulated chain)
+        working-directory: contract
         run: npm test
