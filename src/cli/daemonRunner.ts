@@ -18,14 +18,10 @@ import { join } from "node:path";
 import { SignBoxDaemon } from "../daemon/server.js";
 import { QuotaJournal } from "../daemon/quotaJournal.js";
 import { PolicyCache } from "../daemon/policyCache.js";
-import { ChainPolicyReader } from "../daemon/chainPolicyReader.js";
 import { AuditLog } from "../daemon/auditLog.js";
-import { XprTransactionBroadcaster } from "../daemon/broadcaster.js";
 import type { TransactionBroadcaster } from "../daemon/broadcaster.js";
-import { XprChainReadRelay } from "../daemon/chainRelay.js";
 import type { ChainReadRelay } from "../daemon/chainRelay.js";
-import { XprTransactionSigner } from "../chains/xpr/adapter.js";
-import { decodeXprTransaction } from "../chains/xpr/decode.js";
+import { getChain } from "../chains/index.js";
 import { openKeystoreFile, wipeSecret } from "../keystore/encryptedFile.js";
 import { emptyPolicy } from "../core/policy/schema.js";
 import { ValidationError, KeystoreError } from "../core/errors.js";
@@ -66,41 +62,34 @@ export async function startDaemonFromConfig(
   const context = chainContextOf(config);
   const secrets = new Map<string, Buffer>();
 
+  // All chain-specific implementations come from the registry (issue #44) —
+  // this assembly never names an Xpr* class.
+  const chainModule = getChain(config.chain);
+  const wiring = { endpoints: config.endpoints, chainId: config.chainId };
+
   const signer =
     overrides.signer ??
-    new XprTransactionSigner({
-      endpoints: config.endpoints,
-      chainId: config.chainId,
-      privateKeyProvider: async (key: KeyHandle) => {
-        const secret = secrets.get(key.keyId);
-        if (secret === undefined) throw new ValidationError(`no unlocked key for: ${key.keyId}`);
-        return secret.toString("utf8");
-      },
+    chainModule.createSigner(wiring, async (key: KeyHandle) => {
+      const secret = secrets.get(key.keyId);
+      if (secret === undefined) throw new ValidationError(`no unlocked key for: ${key.keyId}`);
+      return secret.toString("utf8");
     });
 
-  const broadcaster =
-    overrides.broadcaster ??
-    new XprTransactionBroadcaster({ endpoints: config.endpoints, chainId: config.chainId });
-  const relay =
-    overrides.relay ??
-    new XprChainReadRelay({ endpoints: config.endpoints, chainId: config.chainId });
+  const broadcaster = overrides.broadcaster ?? chainModule.createBroadcaster(wiring);
+  const relay = overrides.relay ?? chainModule.createRelay(wiring);
 
   const quotas = new QuotaJournal(config.stateDbPath);
   const policyReader =
-    overrides.policyReader ??
-    new ChainPolicyReader({
-      endpoints: config.endpoints,
-      chainId: config.chainId,
-      contractAccount: config.signboxContract,
-    });
+    overrides.policyReader ?? chainModule.createPolicyReader(wiring, config.signboxContract);
   const policyCache = new PolicyCache(config.stateDbPath, policyReader, {}, overrides.now);
   const audit = new AuditLog(config.stateDbPath);
 
+  const decode = chainModule.decode.bind(chainModule);
   const daemon = new SignBoxDaemon(
     { socketPath: config.socketPath, adminSocketPath: config.adminSocketPath },
     overrides.now === undefined
-      ? { decode: decodeXprTransaction, signer, broadcaster, relay, quotas, policyCache, audit }
-      : { decode: decodeXprTransaction, signer, broadcaster, relay, quotas, policyCache, audit, now: overrides.now },
+      ? { decode, signer, broadcaster, relay, quotas, policyCache, audit }
+      : { decode, signer, broadcaster, relay, quotas, policyCache, audit, now: overrides.now },
   );
 
   const wipeAll = (): void => {
