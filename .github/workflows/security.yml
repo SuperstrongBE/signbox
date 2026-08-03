@@ -1,0 +1,106 @@
+# Security gates (#43): dependency audit, secret scanning, release-artifact
+# checks. Runs on PRs, on main, and weekly (the schedule catches newly
+# published advisories with no code change).
+#
+# ## Dependency severity policy
+#
+#   - core (root) and web/: `npm audit --audit-level=high` is BLOCKING.
+#     Fix or replace the dependency; a temporary exception requires a
+#     documented owner + expiry in this header.
+#   - contract/: REPORT-ONLY (annotated warning, never blocks).
+#     Exception — owner: repo maintainer · reviewed: 2026-08 · expiry: revisit
+#     each time proton-tsc / @proton/vert publish a release.
+#     Rationale: all high/critical findings live in the AssemblyScript
+#     BUILD/TEST toolchain (handlebars via proton-asc, lodash.set via
+#     @proton/vert, mocha 9 chain). None of it ships — the contract compiles
+#     to WASM; these packages never run in production. Upstream offers no
+#     fixed version (the suggested "fix" is a downgrade to proton-tsc 0.0.8).
+#     Remaining exposure is dev/CI supply-chain, mitigated by lockfile-strict
+#     installs (`npm ci`) and this weekly re-audit.
+#
+# ## Secret scanning
+#
+#   gitleaks (pinned) over the FULL git history. Allowlist lives in
+#   .gitleaks.toml — known public test fixtures only; do not widen it to
+#   silence a finding without review.
+#
+# ## Release artifact
+#
+#   scripts/ci/check-artifact.mjs verifies the npm tarball: allowlist-only
+#   contents, no key/token/env material, CLI entrypoints present.
+
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC — weekly advisory sweep
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Audit core (blocking at high)
+        run: npm audit --audit-level=high
+
+      - name: Audit web (blocking at high)
+        working-directory: web
+        run: npm audit --audit-level=high
+
+      - name: Audit contract (report-only — documented exception in header)
+        working-directory: contract
+        run: |
+          npm audit --audit-level=high || {
+            echo "::warning title=contract audit::known toolchain advisories (see security.yml header for the documented exception)"
+            npm audit --audit-level=high --json > /dev/null 2>&1 || true
+          }
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks (pinned)
+        env:
+          GITLEAKS_VERSION: "8.24.3"
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar xz gitleaks
+          ./gitleaks detect --source . --config .gitleaks.toml --redact --exit-code 1
+
+  artifact:
+    name: Release-artifact check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies (lockfile-strict)
+        run: npm ci
+
+      - name: Verify the npm tarball contents
+        run: node scripts/ci/check-artifact.mjs

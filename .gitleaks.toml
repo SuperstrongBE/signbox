@@ -1,0 +1,25 @@
+# Gitleaks configuration (CI secret scanning — see .github/workflows/security.yml).
+#
+# Starts from the default ruleset and allowlists ONLY known non-secrets:
+#  - test fixtures: the canonical, publicly-known EOSIO test WIF
+#    (5KQwrPbwdL6… — printed in every eosjs tutorial; zero secret value) and
+#    obviously-fake placeholder strings used by unit tests.
+#  - lockfiles: integrity hashes trip generic high-entropy rules.
+#
+# Anything else that looks like a secret FAILS the scan. Do not widen these
+# allowlists to silence a finding without review — that is the whole point.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known non-secrets: public test fixtures and lockfile hashes"
+paths = [
+  '''package-lock\.json$''',
+]
+regexes = [
+  # The canonical EOSIO/eosjs test key — public knowledge, not a secret.
+  '''5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3''',
+  # Unit-test placeholder strings (not real key material).
+  '''PVT_K1_secret''',
+]
