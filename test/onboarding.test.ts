@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { runOnboarding, OnboardingError } from "../src/onboarding/flow.js";
-import { buildOnboardingActions } from "../src/onboarding/actions.js";
-import { generatePermissionName } from "../src/onboarding/permission.js";
+import { buildOnboardingActions } from "../src/chains/xpr/onboardingActions.js";
+import { generatePermissionName } from "../src/chains/xpr/permission.js";
 import type {
   BuiltRequest,
   OnboardingBackend,

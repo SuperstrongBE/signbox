@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { READ_ONLY_METHODS, XprChainReadRelay } from "../src/daemon/chainRelay.js";
+import { READ_ONLY_METHODS, XprChainReadRelay } from "../src/chains/xpr/relay.js";
 
 const CHAIN_ID = "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd";
 
