@@ -55,6 +55,16 @@ export interface ChainModule {
   /** Pinned network table: network name → { chainId, endpoints }. */
   readonly networks: Record<string, NetworkDescriptor>;
 
+  /** Shape of this chain's chain ids (XPR: 64 lowercase hex; others differ). */
+  readonly chainIdPattern: RegExp;
+
+  /**
+   * Shape of this chain's policy-registry locator — the `signboxContract`
+   * config value (XPR: an Antelope account name; an object id / contract
+   * address for future chains).
+   */
+  readonly registryLocatorPattern: RegExp;
+
   /** Normalize + validate a raw unserialized JSON transaction (INV-014). */
   decode(input: unknown, context: ChainContext): DecodedTransaction;
 
@@ -88,6 +98,15 @@ export interface ChainModule {
    * the caller.
    */
   broadcastSigned(wiring: ChainWiring, signed: unknown): Promise<unknown>;
+
+  /**
+   * Diagnostics (doctor): verify an endpoint serves the pinned chain id and
+   * report its head time (for clock-skew checks). Throws on mismatch/failure.
+   */
+  checkEndpoint(wiring: ChainWiring): Promise<{ headTimeMs?: number }>;
+
+  /** Diagnostics (doctor): verify the policy registry is deployed. Throws if not. */
+  checkPolicyRegistry(wiring: ChainWiring, registryLocator: string): Promise<void>;
 }
 
 const modules = new Map<string, ChainModule>();

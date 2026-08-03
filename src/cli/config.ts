@@ -18,15 +18,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { ValidationError } from "../core/errors.js";
-import { XPR_NETWORKS } from "../chains/xpr/networks.js";
+import { getChain } from "../chains/index.js";
 import type { ChainContext } from "../core/types.js";
 
 export interface SignBoxConfig {
-  chain: "XPR";
+  /** A chain registered in src/chains (INV-013). Default "XPR". */
+  chain: string;
   network: string;
   chainId: string;
   endpoints: string[];
-  /** Account hosting the SignBox policy contract. */
+  /** The chain's policy-registry locator (XPR: the contract account name). */
   signboxContract: string;
   baseDir: string;
   keystoreDir: string;
@@ -37,23 +38,26 @@ export interface SignBoxConfig {
   stateDbPath: string;
 }
 
-const NAME_PATTERN = "^[a-z1-5.]{1,12}$";
-
-/** Optional deployment overrides — never agents or policies. */
+/**
+ * Optional deployment overrides — never agents or policies. Chain-specific
+ * shapes (chainId format, registry-locator format) are validated against the
+ * chain module's own patterns AFTER shape validation, so the schema stays
+ * chain-neutral.
+ */
 const configSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    chain: { const: "XPR" },
+    chain: { type: "string", minLength: 1, maxLength: 16 },
     network: { type: "string", minLength: 1, maxLength: 32 },
-    chainId: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    chainId: { type: "string", minLength: 1, maxLength: 128 },
     endpoints: {
       type: "array",
       minItems: 1,
       maxItems: 8,
       items: { type: "string", pattern: "^https?://" },
     },
-    signboxContract: { type: "string", pattern: NAME_PATTERN },
+    signboxContract: { type: "string", minLength: 1, maxLength: 128 },
     baseDir: { type: "string", minLength: 1 },
     keystoreDir: { type: "string", minLength: 1 },
     tokenDir: { type: "string", minLength: 1 },
@@ -64,7 +68,7 @@ const configSchema = {
 } as const;
 
 interface ConfigFile {
-  chain?: "XPR";
+  chain?: string;
   network?: string;
   chainId?: string;
   endpoints?: string[];
@@ -87,6 +91,7 @@ export function expandPath(input: string): string {
 }
 
 export const DEFAULT_CONFIG_PATH = "~/.signbox/config.json";
+export const DEFAULT_CHAIN = "XPR";
 const DEFAULT_BASE_DIR = "~/.signbox";
 const DEFAULT_NETWORK = "testnet";
 const DEFAULT_CONTRACT = "signbox";
@@ -120,24 +125,44 @@ export function loadConfig(path: string = DEFAULT_CONFIG_PATH, overrides: Config
     file = parsed as ConfigFile;
   }
 
+  // The chain must be registered; its module owns the network table and the
+  // chain-specific value shapes (chain id, registry locator).
+  const chain = file.chain ?? DEFAULT_CHAIN;
+  let chainModule;
+  try {
+    chainModule = getChain(chain);
+  } catch (error) {
+    throw new ValidationError((error as Error).message);
+  }
+
   const network = overrides.network ?? file.network ?? DEFAULT_NETWORK;
-  const descriptor = XPR_NETWORKS[network];
+  const descriptor = chainModule.networks[network];
   const chainId = file.chainId ?? descriptor?.chainId;
   if (chainId === undefined) {
     throw new ValidationError(`unknown network "${network}" and no explicit chainId provided`);
+  }
+  if (!chainModule.chainIdPattern.test(chainId)) {
+    throw new ValidationError(`chainId does not match the ${chain} chain-id format`);
   }
   const endpoints = file.endpoints ?? descriptor?.endpoints;
   if (endpoints === undefined || endpoints.length === 0) {
     throw new ValidationError(`no endpoints known for network "${network}"`);
   }
 
+  const signboxContract = overrides.signboxContract ?? file.signboxContract ?? DEFAULT_CONTRACT;
+  if (!chainModule.registryLocatorPattern.test(signboxContract)) {
+    throw new ValidationError(
+      `signboxContract "${signboxContract}" does not match the ${chain} registry-locator format`,
+    );
+  }
+
   const baseDir = expandPath(file.baseDir ?? DEFAULT_BASE_DIR);
   return {
-    chain: "XPR",
+    chain,
     network,
     chainId,
     endpoints,
-    signboxContract: overrides.signboxContract ?? file.signboxContract ?? DEFAULT_CONTRACT,
+    signboxContract,
     baseDir,
     keystoreDir: file.keystoreDir !== undefined ? expandPath(file.keystoreDir) : join(baseDir, "keystores"),
     tokenDir: file.tokenDir !== undefined ? expandPath(file.tokenDir) : join(baseDir, "tokens"),
