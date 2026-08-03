@@ -23,22 +23,18 @@ import { createRequire } from "node:module";
 import { readFileSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { JsonRpc } from "@proton/js";
-import { decodeXprTransaction } from "../chains/xpr/decode.js";
-import { XPR_CHAIN, XPR_NETWORKS } from "../chains/xpr/networks.js";
-import { generateK1KeyPair } from "../chains/xpr/keygen.js";
+import { getChain, registeredChains } from "../chains/index.js";
 import { runOnboarding, type BuiltRequest } from "../onboarding/flow.js";
-import { XprOnboardingBackend } from "../onboarding/xprBackend.js";
 import { promoteKeystoreFile, destroyKeystoreFile } from "../keystore/encryptedFile.js";
 import qrcodeTerminal from "qrcode-terminal";
+// A.3 (config generalization) will fold doctor's raw RPC checks into the
+// chain module; until then they stay Antelope-direct.
 import { pinChainId } from "../chains/xpr/adapter.js";
 import { createKeystoreFile } from "../keystore/encryptedFile.js";
 import { validatePolicy } from "../core/policy/schema.js";
 import { verifyStoredPolicy } from "../core/policy/onchain.js";
 import { evaluatePolicy, collectProviderQueries } from "../core/policy/engine.js";
 import { resolveProviders } from "../daemon/providerResolver.js";
-import { ChainPolicyReader } from "../daemon/chainPolicyReader.js";
-import { XprChainReadRelay } from "../daemon/chainRelay.js";
-import { SignBoxError } from "../core/errors.js";
 import { DEFAULT_CONFIG_PATH, expandPath, loadConfig, chainContextOf } from "./config.js";
 import { promptPassphrase } from "./passphrase.js";
 import { isInteractive, promptText, promptSelect, validateAccountName } from "./prompt.js";
@@ -62,10 +58,16 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+// The CLI operates on one chain per invocation; until config generalization
+// (issue #44, A.3) that chain is XPR. Every chain-specific implementation is
+// still resolved through the registry — this is the ONLY place naming it.
+const CLI_CHAIN = "XPR";
+
 function contextFor(network: string): ChainContext {
-  const descriptor = XPR_NETWORKS[network];
-  if (descriptor === undefined) fail(`unknown XPR network: ${network}`);
-  return { chain: XPR_CHAIN, network, chainId: descriptor.chainId };
+  const module = getChain(CLI_CHAIN);
+  const descriptor = module.networks[network];
+  if (descriptor === undefined) fail(`unknown ${module.chain} network: ${network}`);
+  return { chain: module.chain, network, chainId: descriptor.chainId };
 }
 
 function readJsonFile(path: string): unknown {
@@ -162,7 +164,7 @@ key
       fail("passphrases do not match");
     }
     confirm.fill(0);
-    const pair = await generateK1KeyPair();
+    const pair = await getChain(CLI_CHAIN).generateKeyPair();
     const secret = Buffer.from(pair.wif, "utf8");
     try {
       createKeystoreFile(expandPath(options.out), secret, passphrase, {
@@ -197,7 +199,7 @@ tx.command("inspect")
   .action((options: { transaction: string; network: string }) => {
     const context = contextFor(options.network);
     try {
-      const decoded = decodeXprTransaction(readJsonFile(options.transaction), context);
+      const decoded = getChain(CLI_CHAIN).decode(readJsonFile(options.transaction), context);
       print({ context: decoded.context, actions: decoded.actions });
     } catch (error) {
       fail((error as Error).message);
@@ -248,11 +250,12 @@ tx.command("explain")
           source = "local-file";
           meta = { policyFile: options.policy };
         } else {
-          const raw = await new ChainPolicyReader({
-            endpoints: config.endpoints,
-            chainId: config.chainId,
-            contractAccount: config.signboxContract,
-          }).read(options.agent);
+          const raw = await getChain(config.chain)
+            .createPolicyReader(
+              { endpoints: config.endpoints, chainId: config.chainId },
+              config.signboxContract,
+            )
+            .read(options.agent);
           if (raw === null) {
             fail(
               `no on-chain policy for agent "${options.agent}" in contract "${config.signboxContract}" on ${config.network} (deploy one, or pass --policy <file> to test locally)`,
@@ -271,7 +274,7 @@ tx.command("explain")
           meta = { contract: config.signboxContract, enabled: raw.enabled, policyhash: raw.policyhash };
         }
 
-        const decoded = decodeXprTransaction(readJsonFile(options.transaction), context);
+        const decoded = getChain(config.chain).decode(readJsonFile(options.transaction), context);
         const baseCtx = {
           agent: options.agent,
           agentPermission,
@@ -285,7 +288,10 @@ tx.command("explain")
           queries.length > 0
             ? await resolveProviders(
                 queries,
-                new XprChainReadRelay({ endpoints: config.endpoints, chainId: config.chainId }),
+                getChain(config.chain).createRelay({
+                  endpoints: config.endpoints,
+                  chainId: config.chainId,
+                }),
               )
             : undefined;
         const result = evaluatePolicy(
@@ -336,7 +342,10 @@ tx.command("sign")
       // Legacy fallback: a sign-only daemon (no broadcaster) returns the signed
       // bytes without a broadcast report. Submit them client-side, as before.
       if (response.status === "signed" && options.push && response.broadcast === undefined) {
-        const receipt = await pushSigned(config.endpoints, config.chainId, response.signedTransaction);
+        const receipt = await getChain(config.chain).broadcastSigned(
+          { endpoints: config.endpoints, chainId: config.chainId },
+          response.signedTransaction,
+        );
         print({ ...response, pushed: true, receipt });
         return;
       }
@@ -357,12 +366,12 @@ tx.command("push")
   .requiredOption("--signed-transaction <file>", "signed transaction JSON file")
   .option("--network <network>", "XPR network", "testnet")
   .action(async (options: { signedTransaction: string; network: string }) => {
+    const module = getChain(CLI_CHAIN);
     const context = contextFor(options.network);
-    const descriptor = XPR_NETWORKS[options.network];
+    const descriptor = module.networks[options.network];
     try {
-      const receipt = await pushSigned(
-        descriptor?.endpoints ?? [],
-        context.chainId,
+      const receipt = await module.broadcastSigned(
+        { endpoints: descriptor?.endpoints ?? [], chainId: context.chainId },
         readJsonFile(options.signedTransaction),
       );
       print({ pushed: true, receipt });
@@ -370,26 +379,6 @@ tx.command("push")
       fail((error as Error).message);
     }
   });
-
-async function pushSigned(
-  endpoints: string[],
-  chainId: string,
-  signed: unknown,
-): Promise<unknown> {
-  const payload = signed as { signatures?: string[]; packedTransaction?: string };
-  if (!Array.isArray(payload?.signatures) || typeof payload?.packedTransaction !== "string") {
-    throw new SignBoxError(
-      "signed transaction must contain { signatures, packedTransaction } as produced by sign",
-    );
-  }
-  const rpc = new JsonRpc(endpoints);
-  pinChainId(rpc, chainId);
-  await rpc.get_info(); // validates the pinned chain id before any broadcast
-  return rpc.push_transaction({
-    signatures: payload.signatures,
-    serializedTransaction: Uint8Array.from(Buffer.from(payload.packedTransaction, "hex")),
-  });
-}
 
 // ----------------------------------------------------------------- chain
 
@@ -607,23 +596,34 @@ agentCommand
 
       const chain = await def(
         options.chain,
-        () => promptSelect("Chain:", [{ value: "XPR", label: "XPR Network" }], { default: "XPR" }),
-        "XPR",
+        () =>
+          promptSelect(
+            "Chain:",
+            registeredChains().map((c) => ({ value: c, label: c })),
+            { default: CLI_CHAIN },
+          ),
+        CLI_CHAIN,
       );
-      if (chain !== "XPR") fail("only the XPR chain is supported for now");
+      let module;
+      try {
+        module = getChain(chain);
+      } catch (error) {
+        fail((error as Error).message);
+      }
 
       const network = await def(
         options.network,
         () =>
           promptSelect(
             "Network:",
-            Object.keys(XPR_NETWORKS).map((n) => ({ value: n, label: n })),
+            Object.keys(module.networks).map((n) => ({ value: n, label: n })),
             { default: "testnet" },
           ),
         "testnet",
       );
-      const context = contextFor(network);
-      const descriptor = XPR_NETWORKS[network];
+      const descriptor = module.networks[network];
+      if (descriptor === undefined) fail(`unknown ${module.chain} network: ${network}`);
+      const context: ChainContext = { chain: module.chain, network, chainId: descriptor.chainId };
 
       const authority = await req(options.authority, "authority", () =>
         promptText("Authority account (your account name)", { validate: validateAccountName }),
@@ -673,13 +673,14 @@ agentCommand
       // the permission the daemon signs with (overridable via --permission).
       const permission = options.permission ?? "active";
 
-      const backend = new XprOnboardingBackend({
-        endpoints: descriptor?.endpoints ?? [],
-        chainId: context.chainId,
+      const backend = module.createOnboardingBackend(
+        { endpoints: descriptor.endpoints, chainId: context.chainId },
         signboxContract,
-        scheme,
-        ...(options.companionUrl !== undefined ? { companionBaseUrl: options.companionUrl } : {}),
-      });
+        {
+          scheme,
+          ...(options.companionUrl !== undefined ? { companionBaseUrl: options.companionUrl } : {}),
+        },
+      );
 
       try {
         const result = await runOnboarding(
@@ -694,7 +695,7 @@ agentCommand
           },
           {
             backend,
-            generateKey: generateK1KeyPair,
+            generateKey: () => module.generateKeyPair(),
             getPassphrase: async () => {
               const p = await promptPassphrase("keystore passphrase: ");
               const c = await promptPassphrase("confirm passphrase: ");

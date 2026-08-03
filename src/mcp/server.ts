@@ -14,14 +14,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { join } from "node:path";
-import { JsonRpc } from "@proton/js";
-import { decodeXprTransaction } from "../chains/xpr/decode.js";
-import { pinChainId } from "../chains/xpr/adapter.js";
+import { getChain } from "../chains/index.js";
 import { validatePolicy } from "../core/policy/schema.js";
 import { evaluatePolicy } from "../core/policy/engine.js";
 import { canonicalize } from "../core/canonical/jcs.js";
 import { readKeystoreMetadata } from "../keystore/encryptedFile.js";
-import { ChainPolicyReader } from "../daemon/chainPolicyReader.js";
 import { signViaDaemon, readToken } from "../cli/client.js";
 import { discoverKeystores } from "../cli/daemonRunner.js";
 import { chainContextOf, type SignBoxConfig } from "../cli/config.js";
@@ -49,6 +46,9 @@ export interface McpOptions {
 export function buildMcpServer(config: SignBoxConfig, options: McpOptions): McpServer {
   const server = new McpServer({ name: "signbox", version: "0.1.0" });
   const context = chainContextOf(config);
+  // Chain implementations resolve through the registry (issue #44).
+  const chainModule = getChain(config.chain);
+  const wiring = { endpoints: config.endpoints, chainId: config.chainId };
 
   server.registerTool(
     "signbox_agent_list",
@@ -103,7 +103,7 @@ export function buildMcpServer(config: SignBoxConfig, options: McpOptions): McpS
     },
     async ({ transaction }): Promise<ToolResult> => {
       try {
-        const decoded = decodeXprTransaction(transaction, context);
+        const decoded = chainModule.decode(transaction, context);
         return ok({ context: decoded.context, actions: decoded.actions });
       } catch (error) {
         return err((error as Error).message);
@@ -123,11 +123,7 @@ export function buildMcpServer(config: SignBoxConfig, options: McpOptions): McpS
       try {
         const meta = agentMeta(config, agent);
         if (meta === undefined) return err(`unknown agent: ${agent}`);
-        const reader = new ChainPolicyReader({
-          endpoints: config.endpoints,
-          chainId: config.chainId,
-          contractAccount: config.signboxContract,
-        });
+        const reader = chainModule.createPolicyReader(wiring, config.signboxContract);
         const row = await reader.read(agent);
         if (row === null) return ok({ decision: { effect: "deny", code: "POLICY_UNAVAILABLE" } });
         const computed = createHash("sha256").update(Buffer.from(row.policyjson, "utf8")).digest("hex");
@@ -135,7 +131,7 @@ export function buildMcpServer(config: SignBoxConfig, options: McpOptions): McpS
           return ok({ decision: { effect: "deny", code: "POLICY_UNAVAILABLE" } });
         }
         const policy = validatePolicy(JSON.parse(row.policyjson));
-        const decoded = decodeXprTransaction(transaction, context);
+        const decoded = chainModule.decode(transaction, context);
         const { decision } = evaluatePolicy(decoded, policy, {
           agent,
           agentPermission: meta.permission,
@@ -183,17 +179,7 @@ export function buildMcpServer(config: SignBoxConfig, options: McpOptions): McpS
       },
       async ({ signedTransaction }): Promise<ToolResult> => {
         try {
-          const payload = signedTransaction as { signatures?: string[]; packedTransaction?: string };
-          if (!Array.isArray(payload?.signatures) || typeof payload?.packedTransaction !== "string") {
-            return err("signedTransaction must contain { signatures, packedTransaction }");
-          }
-          const rpc = new JsonRpc(config.endpoints);
-          pinChainId(rpc, config.chainId);
-          await rpc.get_info();
-          const receipt = await rpc.push_transaction({
-            signatures: payload.signatures,
-            serializedTransaction: Uint8Array.from(Buffer.from(payload.packedTransaction, "hex")),
-          });
+          const receipt = await chainModule.broadcastSigned(wiring, signedTransaction);
           return ok({ pushed: true, receipt });
         } catch (error) {
           return err((error as Error).message);
