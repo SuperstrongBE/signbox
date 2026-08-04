@@ -51,6 +51,7 @@ export class KeystoreError extends SignBoxError {
       | "FILE_NOT_FOUND"
       | "BAD_FORMAT"
       | "UNSUPPORTED_VERSION"
+      | "UNSUPPORTED"
       | "PERMISSIONS",
     message: string,
   ) {
