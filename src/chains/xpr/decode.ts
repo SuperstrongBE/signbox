@@ -29,6 +29,15 @@ const NAME_PATTERN = "^[a-z1-5.]{1,12}$";
 const ACTION_NAME_PATTERN = "^[a-z1-5.]{1,13}$";
 
 const DATA_KEY_RE = /^[a-zA-Z0-9_]{1,64}$/;
+/**
+ * Keys that collide with Object.prototype machinery. They pass DATA_KEY_RE
+ * (all underscores/letters), and `JSON.parse` keeps `__proto__` as an own
+ * enumerable property, so without this guard `out[key] = …` would invoke the
+ * `__proto__` setter and mutate the object's prototype instead of storing a
+ * field — the normalized policy view would then diverge from the signed
+ * `source`. Reject them outright (fail closed).
+ */
+const FORBIDDEN_DATA_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 const ASSET_STRING_RE = /^(\d+)(?:\.(\d+))? ([A-Z]{1,7})$/;
 const MAX_DATA_DEPTH = 8;
 const MAX_INPUT_BYTES = 32 * 1024;
@@ -116,9 +125,11 @@ function normalizeValue(value: unknown, depth: number): unknown {
       if (Array.isArray(value)) {
         return value.map((item) => normalizeValue(item, depth + 1));
       }
-      const out: Record<string, unknown> = {};
+      // Null prototype: even if a forbidden key somehow reached the assignment,
+      // there is no inherited `__proto__`/`constructor` setter to trigger.
+      const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
       for (const [key, member] of Object.entries(value as Record<string, unknown>)) {
-        if (!DATA_KEY_RE.test(key)) {
+        if (!DATA_KEY_RE.test(key) || FORBIDDEN_DATA_KEYS.has(key)) {
           throw new ValidationError("transaction data contains an invalid field name");
         }
         out[key] = normalizeValue(member, depth + 1);
