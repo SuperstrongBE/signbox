@@ -13,7 +13,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { writeFileSync, mkdirSync, readdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { SignBoxDaemon } from "../daemon/server.js";
 import { QuotaJournal } from "../daemon/quotaJournal.js";
@@ -22,9 +22,9 @@ import { AuditLog } from "../daemon/auditLog.js";
 import type { TransactionBroadcaster } from "../daemon/broadcaster.js";
 import type { ChainReadRelay } from "../daemon/chainRelay.js";
 import { getChain } from "../chains/index.js";
-import { openKeystoreFile, wipeSecret } from "../keystore/encryptedFile.js";
+import { EncryptedFileKeystore, discoverKeystoreFiles } from "../keystore/encryptedFileBackend.js";
 import { emptyPolicy } from "../core/policy/schema.js";
-import { ValidationError, KeystoreError } from "../core/errors.js";
+import { ValidationError } from "../core/errors.js";
 import { chainContextOf, type SignBoxConfig } from "./config.js";
 import type { PolicyReader } from "../daemon/chainPolicyReader.js";
 import type { KeyHandle, TransactionSigner } from "../core/types.js";
@@ -44,14 +44,8 @@ export interface DaemonRunnerOverrides {
   now?: () => number;
 }
 
-/** Discover keystore files (`*.keystore.json`) in the keystore directory. */
-export function discoverKeystores(keystoreDir: string): string[] {
-  if (!existsSync(keystoreDir)) return [];
-  return readdirSync(keystoreDir)
-    .filter((name) => name.endsWith(".keystore.json"))
-    .sort()
-    .map((name) => join(keystoreDir, name));
-}
+/** Discover keystore files — canonical implementation lives with the backend. */
+export const discoverKeystores = discoverKeystoreFiles;
 
 export async function startDaemonFromConfig(
   config: SignBoxConfig,
@@ -60,7 +54,12 @@ export async function startDaemonFromConfig(
   overrides: DaemonRunnerOverrides = {},
 ): Promise<RunningDaemon> {
   const context = chainContextOf(config);
-  const secrets = new Map<string, Buffer>();
+
+  // Key material lives in the keystore backend (issue #46) — the runner never
+  // holds a secrets map of its own. The WIF still crosses into the chain
+  // signer through the scoped access below; that path disappears with the
+  // signDigest signature provider (#46 follow-up).
+  const keystore = new EncryptedFileKeystore(config.keystoreDir);
 
   // All chain-specific implementations come from the registry (issue #44) —
   // this assembly never names an Xpr* class.
@@ -70,9 +69,11 @@ export async function startDaemonFromConfig(
   const signer =
     overrides.signer ??
     chainModule.createSigner(wiring, async (key: KeyHandle) => {
-      const secret = secrets.get(key.keyId);
-      if (secret === undefined) throw new ValidationError(`no unlocked key for: ${key.keyId}`);
-      return secret.toString("utf8");
+      try {
+        return keystore.withSecret(key.keyId, (secret) => secret.toString("utf8"));
+      } catch {
+        throw new ValidationError(`no unlocked key for: ${key.keyId}`);
+      }
     });
 
   const broadcaster = overrides.broadcaster ?? chainModule.createBroadcaster(wiring);
@@ -92,50 +93,23 @@ export async function startDaemonFromConfig(
       : { decode, signer, broadcaster, relay, quotas, policyCache, audit, now: overrides.now },
   );
 
-  const wipeAll = (): void => {
-    for (const secret of secrets.values()) wipeSecret(secret);
-    secrets.clear();
-  };
+  const wipeAll = (): void => keystore.wipe();
 
   const registered: string[] = [];
   try {
     mkdirSync(config.tokenDir, { recursive: true });
 
-    const MAX_PASSPHRASE_ATTEMPTS = 3;
-    for (const keystorePath of discoverKeystores(config.keystoreDir)) {
-      const label = keystorePath.split("/").pop() ?? keystorePath;
-      // A wrong passphrase is a typo, not a fatal error — retry a few times
-      // before giving up, so one fumble doesn't abort a multi-keystore start.
-      let opened: ReturnType<typeof openKeystoreFile> | undefined;
-      for (let attempt = 1; opened === undefined; attempt++) {
-        const passphrase = await passphraseFor(label, attempt);
-        try {
-          opened = openKeystoreFile(keystorePath, passphrase);
-        } catch (error) {
-          if (
-            error instanceof KeystoreError &&
-            error.code === "DECRYPT_FAILED" &&
-            attempt < MAX_PASSPHRASE_ATTEMPTS
-          ) {
-            continue; // re-prompt
-          }
-          throw error;
-        } finally {
-          passphrase.fill(0);
-        }
-      }
-
-      const meta = opened.meta;
+    // Unlock every keystore through the backend (bounded passphrase retries,
+    // duplicate refusal live there); the runner applies its own policy checks
+    // on the returned metadata.
+    const unlockedKeys = await keystore.unlock({ kind: "passphrase", passphraseFor });
+    for (const meta of unlockedKeys) {
       // A keystore bound to another chain must never sign here (INV-013).
       if (meta.chain.chainId !== context.chainId) {
-        wipeSecret(opened.secret);
-        throw new ValidationError(`keystore ${keystorePath} is bound to another chain (INV-013)`);
+        throw new ValidationError(
+          `keystore for agent "${meta.agent}" is bound to another chain (INV-013)`,
+        );
       }
-      if (secrets.has(meta.agent)) {
-        wipeSecret(opened.secret);
-        throw new ValidationError(`duplicate keystore for agent "${meta.agent}"`);
-      }
-      secrets.set(meta.agent, opened.secret);
 
       // Rotating local token (§12.3), written 0600 under the token dir.
       const token = randomBytes(32).toString("base64url");
