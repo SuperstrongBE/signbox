@@ -100,10 +100,32 @@ describe("XPR transaction decoding — INV-014", () => {
     expect(() => decodeXprTransaction(tx2, CHAIN)).toThrow(ValidationError);
   });
 
-  it("rejects prototype-polluting keys in data", () => {
-    const data = JSON.parse('{"from":"superagent","__proto__x":1}');
-    // Keys outside [a-zA-Z0-9_] are rejected; craft one with a dash.
-    const tx = { actions: [{ ...VALID.actions[0], data: { ...data, "bad-key": 1 } }] };
+  it("rejects field names outside the ABI charset", () => {
+    // A dash is outside [a-zA-Z0-9_].
+    const tx = { actions: [{ ...VALID.actions[0], data: { from: "a", "bad-key": 1 } }] };
+    expect(() => decodeXprTransaction(tx, CHAIN)).toThrow(ValidationError);
+  });
+
+  it("rejects a real __proto__ key in data (fail closed, not silent)", () => {
+    // JSON.parse keeps __proto__ as an OWN enumerable property (unlike an object
+    // literal, which would set the prototype), so this is the true attack shape.
+    const data = JSON.parse('{"from":"superagent","__proto__":{"polluted":true}}');
+    const tx = { actions: [{ ...VALID.actions[0], data }] };
+    expect(() => decodeXprTransaction(tx, CHAIN)).toThrow(ValidationError);
+    // And nothing leaked onto Object.prototype.
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
+  });
+
+  it("rejects constructor / prototype keys in data", () => {
+    for (const json of ['{"from":"a","constructor":1}', '{"from":"a","prototype":1}']) {
+      const tx = { actions: [{ ...VALID.actions[0], data: JSON.parse(json) }] };
+      expect(() => decodeXprTransaction(tx, CHAIN)).toThrow(ValidationError);
+    }
+  });
+
+  it("rejects a nested __proto__ key in data", () => {
+    const data = JSON.parse('{"quantity":{"__proto__":{"x":1},"amount":"1"}}');
+    const tx = { actions: [{ ...VALID.actions[0], data }] };
     expect(() => decodeXprTransaction(tx, CHAIN)).toThrow(ValidationError);
   });
 
