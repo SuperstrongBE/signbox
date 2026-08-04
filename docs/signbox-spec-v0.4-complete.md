@@ -548,7 +548,13 @@ Creates the initial row with an empty policy.
 
 Preconditions:
 
-- `requireAuth(authority)`;
+- `requireAuth(authority)` AND `requireAuth(agent)` — both must co-sign. Rows
+  are first-come with no delete action, so requiring only the authority would
+  let anyone front-run onboarding and become an agent's permanent policy
+  authority; the agent's co-signature binds the row to a consenting agent
+  account. During ESR onboarding the agent account is created with its owner
+  controlled by the authority's key, so `agent@owner` is satisfied by the same
+  signature (no extra key);
 - `agent` exists;
 - the authority matches the expected owner relationship;
 - no row exists;
