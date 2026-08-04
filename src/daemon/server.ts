@@ -195,13 +195,11 @@ export class SignBoxDaemon {
       );
     }
     const server = createServer((socket) => this.handleConnection(socket));
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(this.cfg.socketPath, () => {
-        server.removeListener("error", reject);
-        resolve();
-      });
-    });
+    // Create the socket under a restrictive umask so it is born with (at most)
+    // socketMode — closing the window in which listen() creates a world-
+    // reachable socket before chmod tightens it (TOCTOU). chmod below then
+    // pins the exact mode as belt-and-suspenders.
+    await this.listenWithMode(server, this.cfg.socketPath, this.cfg.socketMode);
     chmodSync(this.cfg.socketPath, this.cfg.socketMode);
     this.server = server;
 
@@ -212,15 +210,10 @@ export class SignBoxDaemon {
         throw new ValidationError(`admin socket path already exists: ${adminPath}`);
       }
       const adminServer = createServer((socket) => this.handleAdminConnection(socket));
-      await new Promise<void>((resolve, reject) => {
-        adminServer.once("error", reject);
-        adminServer.listen(adminPath, () => {
-          adminServer.removeListener("error", reject);
-          resolve();
-        });
-      });
-      // The admin socket is ALWAYS restricted to the daemon user (§12.3):
-      // it carries the kill-switch, never agent traffic.
+      // The admin socket is ALWAYS restricted to the daemon user (§12.3): it
+      // carries the kill-switch, never agent traffic. Born 0600 under the
+      // umask, with no pre-chmod window.
+      await this.listenWithMode(adminServer, adminPath, 0o600);
       chmodSync(adminPath, 0o600);
       this.adminServer = adminServer;
     }
@@ -245,6 +238,27 @@ export class SignBoxDaemon {
       } catch {
         /* already gone */
       }
+    }
+  }
+
+  /**
+   * Bind a unix socket with a restrictive umask so the socket file is created
+   * with at most `mode`, eliminating the TOCTOU window between listen() and
+   * chmod. The umask is process-global; this runs only on the sequential
+   * startup path, and the previous umask is always restored.
+   */
+  private async listenWithMode(server: Server, path: string, mode: number): Promise<void> {
+    const prevUmask = process.umask(0o777 & ~mode);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(path, () => {
+          server.removeListener("error", reject);
+          resolve();
+        });
+      });
+    } finally {
+      process.umask(prevUmask);
     }
   }
 
@@ -488,8 +502,9 @@ export class SignBoxDaemon {
         return deny("REQUEST_EXPIRED", "request window is invalid or expired");
       }
 
-      // Anti-replay.
-      const nonceState = this.nonces.register(request.nonce, expiresAt, now);
+      // Anti-replay, namespaced per agent so one agent cannot exhaust another's
+      // nonce budget (cross-agent DoS on anti-replay).
+      const nonceState = this.nonces.register(runtime.agent, request.nonce, expiresAt, now);
       if (nonceState !== "ok") {
         return deny("NONCE_REUSED", "nonce was already used or cannot be registered");
       }

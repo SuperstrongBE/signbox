@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connect } from "node:net";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SignBoxDaemon, type AgentRuntime } from "../src/daemon/server.js";
@@ -293,6 +293,11 @@ describe("SignBox daemon over a real Unix socket", () => {
   it("signs end-to-end over the socket", async () => {
     const response = await roundTrip(makeRequest());
     expect(response).toMatchObject({ status: "signed", signature: "SIG_K1_fake" });
+  });
+
+  it("creates the socket with no group/other access (default 0600)", () => {
+    // The umask at listen() plus the chmod leave no group/other bits set.
+    expect(statSync(socketPath).mode & 0o077).toBe(0);
   });
 
   it("destroys the connection on oversized input (fail closed)", async () => {
