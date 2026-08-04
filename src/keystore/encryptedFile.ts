@@ -51,6 +51,35 @@ function additionalData(file: Omit<KeystoreFileV1, "ciphertext">): Buffer {
   return Buffer.from(canonicalize(file), "utf8");
 }
 
+/**
+ * Accepted band for the Argon2id cost parameters read from an (untrusted)
+ * keystore file. `crypto_pwhash` allocates `memlimit` bytes, so an unbounded
+ * value from a planted/tampered keystore would OOM the daemon at key-load —
+ * before the passphrase can even be checked. We bound both params to the
+ * libsodium standard presets: the INTERACTIVE floor still lets legitimate
+ * keystores (created at MODERATE) load, and the SENSITIVE ceiling (1 GiB /
+ * opslimit 4) is the strongest preset SignBox ever writes, so anything above
+ * it is hostile, not a heavier-but-honest keystore.
+ */
+const KDF_OPSLIMIT_MIN = sodium.crypto_pwhash_OPSLIMIT_INTERACTIVE;
+const KDF_OPSLIMIT_MAX = sodium.crypto_pwhash_OPSLIMIT_SENSITIVE;
+const KDF_MEMLIMIT_MIN = sodium.crypto_pwhash_MEMLIMIT_INTERACTIVE;
+const KDF_MEMLIMIT_MAX = sodium.crypto_pwhash_MEMLIMIT_SENSITIVE;
+
+function assertKdfParamsInBounds(opslimit: unknown, memlimit: unknown): void {
+  const inBounds = (v: unknown, min: number, max: number): boolean =>
+    typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+  if (
+    !inBounds(opslimit, KDF_OPSLIMIT_MIN, KDF_OPSLIMIT_MAX) ||
+    !inBounds(memlimit, KDF_MEMLIMIT_MIN, KDF_MEMLIMIT_MAX)
+  ) {
+    throw new KeystoreError(
+      "BAD_FORMAT",
+      "keystore KDF parameters are out of the accepted range",
+    );
+  }
+}
+
 function deriveKey(
   passphrase: Buffer,
   salt: Buffer,
@@ -191,6 +220,11 @@ export function openKeystoreFile(filePath: string, passphrase: Buffer): OpenedKe
   ) {
     throw new KeystoreError("BAD_FORMAT", "keystore file has malformed cryptographic fields");
   }
+
+  // Bound the KDF cost parameters BEFORE deriving: crypto_pwhash allocates
+  // memlimit bytes, so a hostile value would OOM the daemon before the
+  // passphrase is ever checked.
+  assertKdfParamsInBounds(file.kdf.opslimit, file.kdf.memlimit);
 
   const key = deriveKey(passphrase, salt, file.kdf.opslimit, file.kdf.memlimit);
   try {
