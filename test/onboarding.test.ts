@@ -258,7 +258,13 @@ describe("onboarding actions (§10.2 step 7)", () => {
       policyhash: "a".repeat(64),
       policyjson: '{"schemaVersion":1}',
     });
-    expect(createpolicy.authorization).toEqual([{ actor: "superdev", permission: "active" }]);
+    // Anti-squatting: createpolicy is co-authorized by the agent (owner,
+    // controlled by the authority's key), satisfying the contract's
+    // requireAuth(agent) with the same ESR signature.
+    expect(createpolicy.authorization).toEqual([
+      { actor: "superdev", permission: "active" },
+      { actor: "superagent", permission: "owner" },
+    ]);
   });
 });
 

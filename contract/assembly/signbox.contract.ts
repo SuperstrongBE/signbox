@@ -40,6 +40,13 @@ export class SignboxContract extends Contract {
    * Create the initial row for an agent. The initial policy is whatever the
    * authority submits (the contract cannot check "emptiness"); by convention
    * the onboarding flow submits an empty deny-all policy (§10.2).
+   *
+   * BOTH the authority and the agent must sign. Rows are first-come, with no
+   * delete action, so requiring only the authority would let anyone front-run
+   * an agent's onboarding and become its permanent policy authority (allow-all
+   * or a permanent kill-switch). The agent's co-signature binds the row to a
+   * consenting agent account. The ESR onboarding flow already controls the
+   * agent account's `owner`/`active` in the same transaction, so it co-signs.
    */
   @action("createpolicy")
   createpolicy(
@@ -50,8 +57,11 @@ export class SignboxContract extends Contract {
     policyhash: Checksum256,
     policyjson: string,
   ): void {
-    requireAuth(authority);
+    // isAccount(agent) is checked before requireAuth(agent) so a non-existent
+    // agent yields the precise "does not exist" reason, not a missing-auth one.
     check(isAccount(agent), "agent account does not exist");
+    requireAuth(authority);
+    requireAuth(agent);
     check(isAccount(authority), "authority account does not exist");
     check(this.policies.get(agent.N) == null, "a policy already exists for this agent");
     check(version == 1, "initial policy version must be 1");

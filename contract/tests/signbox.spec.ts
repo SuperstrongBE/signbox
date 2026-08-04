@@ -33,10 +33,10 @@ const asserts = (message: string): string => `eosio_assert: ${message}`;
 const rows = () => contract.tables.policies().getTableRows();
 
 describe("createpolicy", () => {
-  it("creates a row authorized by the authority", async () => {
+  it("creates a row when authority and agent co-sign", async () => {
     await contract.actions
       .createpolicy(["superagent", "superdev", "xp2vr3", 1, EMPTY_HASH, EMPTY_POLICY])
-      .send("superdev@active");
+      .send(["superdev@active", "superagent@active"]);
     const row = rows()[0];
     expect(row.agent).to.equal("superagent");
     expect(row.authority).to.equal("superdev");
@@ -54,11 +54,24 @@ describe("createpolicy", () => {
     );
   });
 
+  it("requires the agent signature (anti-squatting)", async () => {
+    // An attacker who controls only their own account (otherdev) tries to
+    // register themselves as the permanent authority for someone else's agent
+    // account. Without the agent's co-signature the row can never be created.
+    await expectToThrow(
+      contract.actions
+        .createpolicy(["superagent", "otherdev", "xp2vr3", 1, EMPTY_HASH, EMPTY_POLICY])
+        .send("otherdev@active"),
+      "missing required authority superagent",
+    );
+    expect(rows().length).to.equal(0);
+  });
+
   it("rejects a hash that does not match the json", async () => {
     await expectToThrow(
       contract.actions
         .createpolicy(["superagent", "superdev", "xp2vr3", 1, "b".repeat(64), EMPTY_POLICY])
-        .send("superdev@active"),
+        .send(["superdev@active", "superagent@active"]),
       asserts("policy hash does not match the canonical policy json"),
     );
   });
@@ -76,7 +89,7 @@ describe("createpolicy", () => {
     await expectToThrow(
       contract.actions
         .createpolicy(["superagent", "superdev", "xp2vr3", 2, EMPTY_HASH, EMPTY_POLICY])
-        .send("superdev@active"),
+        .send(["superdev@active", "superagent@active"]),
       asserts("initial policy version must be 1"),
     );
   });
@@ -84,11 +97,11 @@ describe("createpolicy", () => {
   it("rejects a duplicate row", async () => {
     await contract.actions
       .createpolicy(["superagent", "superdev", "xp2vr3", 1, EMPTY_HASH, EMPTY_POLICY])
-      .send("superdev@active");
+      .send(["superdev@active", "superagent@active"]);
     await expectToThrow(
       contract.actions
         .createpolicy(["superagent", "superdev", "xp2vr3", 1, EMPTY_HASH, EMPTY_POLICY])
-        .send("superdev@active"),
+        .send(["superdev@active", "superagent@active"]),
       asserts("a policy already exists for this agent"),
     );
   });
@@ -102,7 +115,7 @@ describe("setpolicy", () => {
   beforeEach(async () => {
     await contract.actions
       .createpolicy(["superagent", "superdev", "xp2vr3", 1, EMPTY_HASH, EMPTY_POLICY])
-      .send("superdev@active");
+      .send(["superdev@active", "superagent@active"]);
   });
 
   it("updates with a strictly greater version", async () => {
@@ -130,7 +143,7 @@ describe("disable / enable", () => {
   beforeEach(async () => {
     await contract.actions
       .createpolicy(["superagent", "superdev", "xp2vr3", 1, EMPTY_HASH, EMPTY_POLICY])
-      .send("superdev@active");
+      .send(["superdev@active", "superagent@active"]);
   });
 
   it("disables and re-enables under the authority", async () => {
@@ -152,7 +165,7 @@ describe("setauthority", () => {
   beforeEach(async () => {
     await contract.actions
       .createpolicy(["superagent", "superdev", "xp2vr3", 1, EMPTY_HASH, EMPTY_POLICY])
-      .send("superdev@active");
+      .send(["superdev@active", "superagent@active"]);
   });
 
   it("requires BOTH current and new authority (double acceptance)", async () => {

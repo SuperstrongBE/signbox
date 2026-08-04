@@ -105,10 +105,18 @@ export function buildOnboardingActions(input: BuildActionsInput): OnboardingActi
 
   // Register the empty deny-all policy in the SignBox contract. RAM paid by
   // the authority (it signs and is the payer of the row).
+  //
+  // createpolicy requires BOTH authority and agent to sign (anti-squatting):
+  // the agent account is created above with owner = the authority's key, so
+  // `agent@owner` is satisfied by the same ESR signature — no extra key. owner
+  // (parent of active) also satisfies the contract's `requireAuth(agent)`.
   actions.push({
     account: input.signboxContract,
     name: "createpolicy",
-    authorization: byAuthority,
+    authorization: [
+      ...byAuthority,
+      { actor: input.agent, permission: "owner" },
+    ],
     data: {
       agent: input.agent,
       authority: input.authority,
