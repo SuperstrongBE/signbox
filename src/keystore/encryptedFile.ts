@@ -55,16 +55,21 @@ function additionalData(file: Omit<KeystoreFileV1, "ciphertext">): Buffer {
  * Accepted band for the Argon2id cost parameters read from an (untrusted)
  * keystore file. `crypto_pwhash` allocates `memlimit` bytes, so an unbounded
  * value from a planted/tampered keystore would OOM the daemon at key-load —
- * before the passphrase can even be checked. We bound both params to the
- * libsodium standard presets: the INTERACTIVE floor still lets legitimate
- * keystores (created at MODERATE) load, and the SENSITIVE ceiling (1 GiB /
- * opslimit 4) is the strongest preset SignBox ever writes, so anything above
- * it is hostile, not a heavier-but-honest keystore.
+ * before the passphrase can even be checked.
+ *
+ * Both params are bounded by what SignBox itself writes: `createKeystoreFile`
+ * always uses the MODERATE preset (256 MiB / opslimit 3), so MODERATE is the
+ * operational ceiling — anything above it is hostile, not a heavier-but-honest
+ * keystore, and 256 MiB is a bounded, container-friendly worst-case allocation
+ * (the SENSITIVE preset would let a planted file demand 1 GiB before its
+ * passphrase is verified). The INTERACTIVE floor still lets every legitimate
+ * keystore load. If a stronger preset is ever written, raise the ceiling in
+ * the SAME change that starts writing it.
  */
 const KDF_OPSLIMIT_MIN = sodium.crypto_pwhash_OPSLIMIT_INTERACTIVE;
-const KDF_OPSLIMIT_MAX = sodium.crypto_pwhash_OPSLIMIT_SENSITIVE;
+const KDF_OPSLIMIT_MAX = sodium.crypto_pwhash_OPSLIMIT_MODERATE;
 const KDF_MEMLIMIT_MIN = sodium.crypto_pwhash_MEMLIMIT_INTERACTIVE;
-const KDF_MEMLIMIT_MAX = sodium.crypto_pwhash_MEMLIMIT_SENSITIVE;
+const KDF_MEMLIMIT_MAX = sodium.crypto_pwhash_MEMLIMIT_MODERATE;
 
 function assertKdfParamsInBounds(opslimit: unknown, memlimit: unknown): void {
   const inBounds = (v: unknown, min: number, max: number): boolean =>

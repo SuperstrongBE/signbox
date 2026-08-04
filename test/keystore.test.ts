@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import sodium from "sodium-native";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -158,6 +159,42 @@ describe("encrypted-file keystore", () => {
     expect(() => openKeystoreFile(path, passphrase)).toThrowError(
       expect.objectContaining({ code: "BAD_FORMAT" }),
     );
+  });
+
+  it("caps the accepted memlimit at MODERATE — the strongest preset SignBox writes (#62)", () => {
+    const dir = tempDir();
+    const { path, passphrase } = makeKeystore(dir);
+    const file = JSON.parse(readFileSync(path, "utf8"));
+    // At exactly the ceiling (what createKeystoreFile writes) the bounds check
+    // passes — the failure that follows is the AAD/passphrase gate, proving
+    // crypto_pwhash WAS attempted. One byte above, BAD_FORMAT fires first and
+    // the (up to 1 GiB under the old SENSITIVE bound) allocation never happens.
+    expect(file.kdf.memlimit).toBe(sodium.crypto_pwhash_MEMLIMIT_MODERATE);
+    file.kdf.memlimit = sodium.crypto_pwhash_MEMLIMIT_MODERATE + 1;
+    writeFileSync(path, JSON.stringify(file), { mode: 0o600 });
+    expect(() => openKeystoreFile(path, passphrase)).toThrowError(
+      expect.objectContaining({ code: "BAD_FORMAT" }),
+    );
+  });
+
+  it("caps the accepted opslimit at MODERATE (#62)", () => {
+    const dir = tempDir();
+    const { path, passphrase } = makeKeystore(dir);
+    const file = JSON.parse(readFileSync(path, "utf8"));
+    expect(file.kdf.opslimit).toBe(sodium.crypto_pwhash_OPSLIMIT_MODERATE);
+    file.kdf.opslimit = sodium.crypto_pwhash_OPSLIMIT_MODERATE + 1;
+    writeFileSync(path, JSON.stringify(file), { mode: 0o600 });
+    expect(() => openKeystoreFile(path, passphrase)).toThrowError(
+      expect.objectContaining({ code: "BAD_FORMAT" }),
+    );
+  });
+
+  it("keystores written by createKeystoreFile load under the ceiling (compatibility)", () => {
+    const dir = tempDir();
+    const { path, passphrase, secret } = makeKeystore(dir);
+    const opened = openKeystoreFile(path, passphrase);
+    expect(Buffer.compare(opened.secret, secret)).toBe(0);
+    wipeSecret(opened.secret);
   });
 
   it("rejects non-integer / non-numeric KDF parameters", () => {
