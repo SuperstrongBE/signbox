@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { Api, JsonRpc, JsSignatureProvider } from "@proton/js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Api, JsonRpc } from "@proton/js";
 import { XprTransactionSigner, SigningError, pinChainId } from "../src/chains/xpr/adapter.js";
+import type { XprSignerOptions } from "../src/chains/xpr/adapter.js";
+import { KeystoreSignatureProvider } from "../src/chains/xpr/signatureProvider.js";
 import { decodeXprTransaction } from "../src/chains/xpr/decode.js";
+import { createKeystoreFile } from "../src/keystore/encryptedFile.js";
+import { EncryptedFileKeystore } from "../src/keystore/encryptedFileBackend.js";
+import type { KeystoreBackend } from "../src/keystore/backend.js";
 import type { ChainContext, KeyHandle } from "../src/core/types.js";
 
 const CHAIN_ID = "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd";
@@ -10,15 +18,37 @@ const CHAIN: ChainContext = { chain: "XPR", network: "testnet", chainId: CHAIN_I
 
 /** Well-known throwaway test key (never fund it). */
 const TEST_WIF = "5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3";
+const TEST_PUB = "PUB_K1_6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5BoDq63";
 
 const KEY: KeyHandle = {
-  keyId: "k-test",
-  publicKey: "EOS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV",
+  keyId: "superagent",
+  publicKey: TEST_PUB,
   exportPolicy: "non-exportable",
   chain: CHAIN,
   agent: "superagent",
   permission: "xp2vr3",
 };
+
+/** A real encrypted-file backend holding the test WIF, unlocked. */
+async function makeKeystore(): Promise<KeystoreBackend> {
+  const dir = mkdtempSync(join(tmpdir(), "signbox-signer-"));
+  createKeystoreFile(
+    join(dir, "superagent.keystore.json"),
+    Buffer.from(TEST_WIF, "utf8"),
+    Buffer.from("passphrase"),
+    {
+      publicKey: TEST_PUB,
+      exportPolicy: "non-exportable",
+      chain: CHAIN,
+      agent: "superagent",
+      permission: "xp2vr3",
+      createdAt: "2026-08-04T00:00:00.000Z",
+    },
+  );
+  const backend = new EncryptedFileKeystore(dir);
+  await backend.unlock({ kind: "passphrase", passphraseFor: async () => Buffer.from("passphrase") });
+  return backend;
+}
 
 /** Minimal eosio.token ABI — enough to serialize/deserialize `transfer`. */
 const TOKEN_ABI = {
@@ -50,7 +80,7 @@ const FIXED_TAPOS = {
   ref_block_prefix: 987654321,
 };
 
-function offlineApiFactory(wif: string): Api {
+function offlineApiFactory(key: KeyHandle, options: XprSignerOptions): Api {
   const rpc = new JsonRpc(["http://127.0.0.1:1"]);
   // @proton/js calls rpc.get_info() unconditionally inside transact(); with
   // a provided transactionHeader its result is unused, so stub it to keep
@@ -60,9 +90,11 @@ function offlineApiFactory(wif: string): Api {
   });
   const api = new Api({
     rpc,
-    signatureProvider: new JsSignatureProvider([wif]) as unknown as NonNullable<
-      ConstructorParameters<typeof Api>[0]["signatureProvider"]
-    >,
+    signatureProvider: new KeystoreSignatureProvider(
+      options.keystore,
+      key.keyId,
+      key.publicKey,
+    ) as unknown as NonNullable<ConstructorParameters<typeof Api>[0]["signatureProvider"]>,
     authorityProvider: { getRequiredKeys: async (args) => args.availableKeys },
   });
   (api as unknown as { cachedAbis: Map<string, unknown> }).cachedAbis.set("eosio.token", {
@@ -72,11 +104,11 @@ function offlineApiFactory(wif: string): Api {
   return api;
 }
 
-function makeSigner(): XprTransactionSigner {
+async function makeSigner(): Promise<XprTransactionSigner> {
   return new XprTransactionSigner({
     endpoints: ["http://127.0.0.1:1"],
     chainId: CHAIN_ID,
-    privateKeyProvider: async () => TEST_WIF,
+    keystore: await makeKeystore(),
     taposProvider: async () => FIXED_TAPOS,
     apiFactory: offlineApiFactory,
   });
@@ -96,7 +128,7 @@ const TRANSFER_JSON = {
 describe("XprTransactionSigner (offline, deterministic)", () => {
   it("signs the exact validated JSON and returns a K1 signature", async () => {
     const tx = decodeXprTransaction(TRANSFER_JSON, CHAIN);
-    const result = await makeSigner().sign(tx, KEY);
+    const result = await (await makeSigner()).sign(tx, KEY);
     expect(result.signature).toMatch(/^SIG_K1_/);
     expect(result.transactionDigest).toMatch(/^[0-9a-f]{64}$/);
     const signed = result.signedTransaction as { packedTransaction: string; signatures: string[] };
@@ -106,8 +138,8 @@ describe("XprTransactionSigner (offline, deterministic)", () => {
 
   it("is deterministic: same input, same TAPOS, same digest", async () => {
     const tx = decodeXprTransaction(TRANSFER_JSON, CHAIN);
-    const a = await makeSigner().sign(tx, KEY);
-    const b = await makeSigner().sign(tx, KEY);
+    const a = await (await makeSigner()).sign(tx, KEY);
+    const b = await (await makeSigner()).sign(tx, KEY);
     expect(a.transactionDigest).toBe(b.transactionDigest);
     expect((a.signedTransaction as { packedTransaction: string }).packedTransaction).toBe(
       (b.signedTransaction as { packedTransaction: string }).packedTransaction,
@@ -116,7 +148,7 @@ describe("XprTransactionSigner (offline, deterministic)", () => {
 
   it("computes the digest over chainId ‖ packed_trx ‖ zero32", async () => {
     const tx = decodeXprTransaction(TRANSFER_JSON, CHAIN);
-    const result = await makeSigner().sign(tx, KEY);
+    const result = await (await makeSigner()).sign(tx, KEY);
     const packed = Buffer.from(
       (result.signedTransaction as { packedTransaction: string }).packedTransaction,
       "hex",
@@ -131,8 +163,8 @@ describe("XprTransactionSigner (offline, deterministic)", () => {
 
   it("the signed bytes round-trip to exactly the validated JSON (WYSIWYS)", async () => {
     const tx = decodeXprTransaction(TRANSFER_JSON, CHAIN);
-    const result = await makeSigner().sign(tx, KEY);
-    const api = offlineApiFactory(TEST_WIF);
+    const result = await (await makeSigner()).sign(tx, KEY);
+    const api = offlineApiFactory(KEY, { endpoints: [], chainId: CHAIN_ID, keystore: await makeKeystore() });
     const packed = Buffer.from(
       (result.signedTransaction as { packedTransaction: string }).packedTransaction,
       "hex",
@@ -153,10 +185,10 @@ describe("XprTransactionSigner (offline, deterministic)", () => {
     const signer = new XprTransactionSigner({
       endpoints: ["http://127.0.0.1:1"],
       chainId: CHAIN_ID,
-      privateKeyProvider: async () => TEST_WIF,
+      keystore: await makeKeystore(),
       taposProvider: async () => FIXED_TAPOS,
-      apiFactory: (wif) => {
-        const api = offlineApiFactory(wif);
+      apiFactory: (key, options) => {
+        const api = offlineApiFactory(key, options);
         const original = api.deserializeTransactionWithActions.bind(api);
         // Simulate an ABI/serialization divergence: the bytes decode to a
         // different recipient than the one that was validated.
@@ -175,7 +207,7 @@ describe("XprTransactionSigner (offline, deterministic)", () => {
   it("refuses a transaction without a validated source", async () => {
     const tx = decodeXprTransaction(TRANSFER_JSON, CHAIN);
     delete (tx as { source?: unknown }).source;
-    await expect(makeSigner().sign(tx, KEY)).rejects.toThrow(SigningError);
+    await expect((await makeSigner()).sign(tx, KEY)).rejects.toThrow(SigningError);
   });
 
   it("refuses a key pinned to another chain (INV-013)", async () => {
@@ -184,7 +216,7 @@ describe("XprTransactionSigner (offline, deterministic)", () => {
       ...KEY,
       chain: { ...CHAIN, chainId: "b".repeat(64) },
     };
-    await expect(makeSigner().sign(tx, foreignKey)).rejects.toThrow(SigningError);
+    await expect((await makeSigner()).sign(tx, foreignKey)).rejects.toThrow(SigningError);
   });
 
   it("refuses to sign when the RPC reports another chain id (INV-009, §17.4)", async () => {
@@ -210,8 +242,8 @@ describe("XprTransactionSigner (offline, deterministic)", () => {
     // The agent mutates its own object after validation…
     input.actions[0]!.data.to = "mallory";
     input.actions[0]!.data.quantity = "999999.0000 XPR";
-    const result = await makeSigner().sign(tx, KEY);
-    const api = offlineApiFactory(TEST_WIF);
+    const result = await (await makeSigner()).sign(tx, KEY);
+    const api = offlineApiFactory(KEY, { endpoints: [], chainId: CHAIN_ID, keystore: await makeKeystore() });
     const decoded = await api.deserializeTransactionWithActions(
       Buffer.from(
         (result.signedTransaction as { packedTransaction: string }).packedTransaction,

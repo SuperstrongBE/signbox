@@ -18,6 +18,12 @@ import {
   wipeSecret,
   type KeystoreMetadata,
 } from "./encryptedFile.js";
+import {
+  derivePublicKeyK1,
+  derivePublicKeyLegacy,
+  signDigestK1Canonical,
+  wifToPrivateKey,
+} from "./k1.js";
 import type { KeystoreBackend, SignatureScheme, UnlockContext } from "./backend.js";
 
 /** Discover keystore files (`*.keystore.json`) in a keystore directory. */
@@ -87,33 +93,45 @@ export class EncryptedFileKeystore implements KeystoreBackend {
     return unlocked;
   }
 
-  async signDigest(_keyId: string, _digest: Uint8Array, _scheme: SignatureScheme): Promise<Uint8Array> {
-    throw new KeystoreError(
-      "UNSUPPORTED",
-      "signDigest lands with the signature-provider swap (#46) — use the scoped secret access until then",
-    );
-  }
-
-  async verifyKeyBinding(_keyId: string): Promise<boolean> {
-    throw new KeystoreError(
-      "UNSUPPORTED",
-      "verifyKeyBinding lands with the signature-provider swap (#46)",
-    );
-  }
-
-  /**
-   * TRANSITIONAL (#46): scoped access to an unlocked secret, for the current
-   * WIF-based signer path. The callback's return value may derive from the
-   * secret but the buffer itself must not escape. Removed when the XPR
-   * SignatureProvider moves onto signDigest — after that, nothing outside
-   * this module can touch key material.
-   */
-  withSecret<T>(keyId: string, use: (secret: Buffer) => T): T {
+  /** The unlocked WIF for keyId, decoded to its scalar. Caller wipes it. */
+  private privateKeyOf(keyId: string): Buffer {
     const secret = this.secrets.get(keyId);
     if (secret === undefined) {
       throw new KeystoreError("FILE_NOT_FOUND", `no unlocked key for: ${keyId}`);
     }
-    return use(secret);
+    return wifToPrivateKey(secret.toString("utf8"));
+  }
+
+  async signDigest(keyId: string, digest: Uint8Array, scheme: SignatureScheme): Promise<Uint8Array> {
+    if (scheme !== "secp256k1-canonical" && scheme !== "secp256k1") {
+      throw new KeystoreError(
+        "UNSUPPORTED",
+        `encrypted-file keys are K1 WIFs — scheme "${scheme}" is not available`,
+      );
+    }
+    const privateKey = this.privateKeyOf(keyId);
+    try {
+      // Both supported schemes produce the [recid, r, s] layout; the
+      // canonical variant additionally grinds for Antelope canonicality.
+      return signDigestK1Canonical(privateKey, digest);
+    } finally {
+      privateKey.fill(0);
+    }
+  }
+
+  async verifyKeyBinding(keyId: string): Promise<boolean> {
+    const meta = this.readMetadata(keyId);
+    if (meta === undefined) return false;
+    const privateKey = this.privateKeyOf(keyId);
+    try {
+      const declared = meta.publicKey;
+      const derived = declared.startsWith("EOS")
+        ? derivePublicKeyLegacy(privateKey)
+        : derivePublicKeyK1(privateKey);
+      return derived === declared;
+    } finally {
+      privateKey.fill(0);
+    }
   }
 
   wipe(): void {

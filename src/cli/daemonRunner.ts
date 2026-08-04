@@ -27,7 +27,7 @@ import { emptyPolicy } from "../core/policy/schema.js";
 import { ValidationError } from "../core/errors.js";
 import { chainContextOf, type SignBoxConfig } from "./config.js";
 import type { PolicyReader } from "../daemon/chainPolicyReader.js";
-import type { KeyHandle, TransactionSigner } from "../core/types.js";
+import type { TransactionSigner } from "../core/types.js";
 
 export interface RunningDaemon {
   daemon: SignBoxDaemon;
@@ -55,10 +55,8 @@ export async function startDaemonFromConfig(
 ): Promise<RunningDaemon> {
   const context = chainContextOf(config);
 
-  // Key material lives in the keystore backend (issue #46) — the runner never
-  // holds a secrets map of its own. The WIF still crosses into the chain
-  // signer through the scoped access below; that path disappears with the
-  // signDigest signature provider (#46 follow-up).
+  // Key material lives in the keystore backend and never leaves it (issue
+  // #46): the chain signer signs through the backend's signDigest.
   const keystore = new EncryptedFileKeystore(config.keystoreDir);
 
   // All chain-specific implementations come from the registry (issue #44) —
@@ -66,15 +64,7 @@ export async function startDaemonFromConfig(
   const chainModule = getChain(config.chain);
   const wiring = { endpoints: config.endpoints, chainId: config.chainId };
 
-  const signer =
-    overrides.signer ??
-    chainModule.createSigner(wiring, async (key: KeyHandle) => {
-      try {
-        return keystore.withSecret(key.keyId, (secret) => secret.toString("utf8"));
-      } catch {
-        throw new ValidationError(`no unlocked key for: ${key.keyId}`);
-      }
-    });
+  const signer = overrides.signer ?? chainModule.createSigner(wiring, keystore);
 
   const broadcaster = overrides.broadcaster ?? chainModule.createBroadcaster(wiring);
   const relay = overrides.relay ?? chainModule.createRelay(wiring);

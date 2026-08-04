@@ -5,8 +5,9 @@
  * signature) are DELEGATED to @proton/js, per the spec. SignBox's own
  * responsibilities here are exactly three:
  *
- *  1. the private key only ever exists inside this process, scoped through
- *     a provider callback (never a field, never logged);
+ *  1. the private key never enters this module at all: signatures come from
+ *     the keystore backend through signDigest (#46) — @proton/js only ever
+ *     sees a SignatureProvider that returns SIG_K1 strings;
  *  2. the object handed to the package is `DecodedTransaction.source` —
  *     the validated original JSON, byte-for-byte what the policy saw
  *     (INV-014: nothing mutated between decision and signing);
@@ -20,12 +21,14 @@
  * can never be valid on another chain.
  */
 
-import { Api, JsonRpc, JsSignatureProvider } from "@proton/js";
+import { Api, JsonRpc } from "@proton/js";
 import { createHash } from "node:crypto";
 import { SignBoxError, ValidationError } from "../../core/errors.js";
 import { canonicalize } from "../../core/canonical/jcs.js";
 import { decodeXprTransaction } from "./decode.js";
+import { KeystoreSignatureProvider } from "./signatureProvider.js";
 import { XPR_CHAIN, XPR_NETWORKS } from "./networks.js";
+import type { KeystoreBackend } from "../../keystore/backend.js";
 import type {
   ChainAdapter,
   ChainContext,
@@ -62,14 +65,14 @@ export interface XprSignerOptions {
   /** Short by default: a signed-but-unpushed transaction dies quickly (§5.5). */
   expireSeconds?: number;
   /**
-   * Scoped access to the agent's private key (WIF). Called per signing
-   * request; the keystore-backed implementation lives in the daemon.
+   * The keystore holding the agent keys. Signing goes through
+   * `signDigest` — the private key never enters this module (#46).
    */
-  privateKeyProvider: (key: KeyHandle) => Promise<string>;
+  keystore: KeystoreBackend;
   /** Test seam: fixed TAPOS header instead of an RPC lookup. */
   taposProvider?: (api: Api) => Promise<TaposHeader>;
   /** Test seam: customize the Api construction (e.g. preloaded ABIs). */
-  apiFactory?: (wif: string, options: XprSignerOptions) => Api;
+  apiFactory?: (key: KeyHandle, options: XprSignerOptions) => Api;
 }
 
 /**
@@ -91,17 +94,21 @@ export function pinChainId(rpc: JsonRpc, chainId: string): void {
   };
 }
 
-function defaultApiFactory(wif: string, options: XprSignerOptions): Api {
+function defaultApiFactory(key: KeyHandle, options: XprSignerOptions): Api {
   const rpc = new JsonRpc(options.endpoints);
   pinChainId(rpc, options.chainId);
 
   return new Api({
     rpc,
-    // Cast: @proton/js's own JsSignatureProvider signature is not assignable
-    // to its SignatureProvider interface under exactOptionalPropertyTypes.
-    signatureProvider: new JsSignatureProvider([wif]) as unknown as NonNullable<
-      ConstructorParameters<typeof Api>[0]["signatureProvider"]
-    >,
+    // Signing is delegated to the keystore backend through signDigest —
+    // no key material is ever handed to @proton/js (#46). Cast: the
+    // package's SignatureProvider interface is not assignable under
+    // exactOptionalPropertyTypes.
+    signatureProvider: new KeystoreSignatureProvider(
+      options.keystore,
+      key.keyId,
+      key.publicKey,
+    ) as unknown as NonNullable<ConstructorParameters<typeof Api>[0]["signatureProvider"]>,
     // SignBox knows exactly which key signs: resolving "required keys"
     // locally removes an RPC dependency from the signing hot path.
     authorityProvider: {
@@ -127,17 +134,16 @@ export class XprTransactionSigner implements TransactionSigner {
     this.options = { ...options, expireSeconds: options.expireSeconds ?? 60 };
   }
 
-  private async apiFor(key: KeyHandle): Promise<Api> {
+  private apiFor(key: KeyHandle): Api {
     const cached = this.apis.get(key.keyId);
     if (cached !== undefined) return cached;
-    const wif = await this.options.privateKeyProvider(key);
     const factory = this.options.apiFactory ?? defaultApiFactory;
-    const api = factory(wif, this.options);
+    const api = factory(key, this.options);
     this.apis.set(key.keyId, api);
     return api;
   }
 
-  /** Drop the cached Api (and its in-memory key) for a rotated/revoked key. */
+  /** Drop the cached Api for a rotated/revoked key. */
   evict(keyId: string): void {
     this.apis.delete(keyId);
   }
@@ -150,7 +156,7 @@ export class XprTransactionSigner implements TransactionSigner {
       throw new SigningError("key chain does not match the signer configuration");
     }
     const source = tx.source as XprSourceTransaction;
-    const api = await this.apiFor(key);
+    const api = this.apiFor(key);
 
     // Serialize + sign, never broadcast (INV-011: push is a separate step).
     // The envelope (TAPOS + expiration) is SignBox's to build, never the

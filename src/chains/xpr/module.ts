@@ -16,7 +16,8 @@ import { XprTransactionBroadcaster } from "./broadcaster.js";
 import { XprChainReadRelay } from "./relay.js";
 import { XprPolicyReader } from "./policyReader.js";
 import { XprOnboardingBackend } from "./onboarding.js";
-import type { ChainModule, ChainWiring, PrivateKeyProvider } from "../registry.js";
+import type { ChainModule, ChainWiring } from "../registry.js";
+import type { KeystoreBackend } from "../../keystore/backend.js";
 
 const ONBOARDING_SCHEMES = ["esr", "proton", "proton-dev"] as const;
 type OnboardingScheme = (typeof ONBOARDING_SCHEMES)[number];
@@ -36,8 +37,8 @@ export const xprModule: ChainModule = {
 
   generateKeyPair: generateK1KeyPair,
 
-  createSigner(wiring: ChainWiring, keys: PrivateKeyProvider) {
-    return new XprTransactionSigner({ ...wiring, privateKeyProvider: keys });
+  createSigner(wiring: ChainWiring, keystore: KeystoreBackend) {
+    return new XprTransactionSigner({ ...wiring, keystore });
   },
 
   createBroadcaster(wiring: ChainWiring) {

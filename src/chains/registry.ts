@@ -24,24 +24,18 @@ import type {
   DecodedTransaction,
   NetworkDescriptor,
   TransactionSigner,
-  KeyHandle,
 } from "../core/types.js";
 import type { TransactionBroadcaster } from "../daemon/broadcaster.js";
 import type { ChainReadRelay } from "../daemon/chainRelay.js";
 import type { PolicyReader } from "../daemon/chainPolicyReader.js";
 import type { OnboardingBackend } from "../onboarding/flow.js";
+import type { KeystoreBackend } from "../keystore/backend.js";
 
 /** Endpoint + pinned chain id — what every network-touching factory needs. */
 export interface ChainWiring {
   endpoints: string[];
   chainId: string;
 }
-
-/**
- * The seam the signer pulls key material through. WIF-shaped today — this is
- * the boundary issue #46 replaces with a no-export `signDigest` backend.
- */
-export type PrivateKeyProvider = (key: KeyHandle) => Promise<string>;
 
 export interface ChainKeyPair {
   wif: string;
@@ -71,7 +65,8 @@ export interface ChainModule {
   /** Generate a fresh agent key pair (used by onboarding / `key generate`). */
   generateKeyPair(): Promise<ChainKeyPair>;
 
-  createSigner(wiring: ChainWiring, keys: PrivateKeyProvider): TransactionSigner;
+  /** Signing pulls from the keystore's signDigest — never raw key material. */
+  createSigner(wiring: ChainWiring, keystore: KeystoreBackend): TransactionSigner;
   createBroadcaster(wiring: ChainWiring): TransactionBroadcaster;
   createRelay(wiring: ChainWiring): ChainReadRelay;
 

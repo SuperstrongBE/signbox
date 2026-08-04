@@ -10,4 +10,4 @@ import { xprModule } from "./xpr/module.js";
 registerChain(xprModule);
 
 export { getChain, registeredChains };
-export type { ChainModule, ChainWiring, PrivateKeyProvider, ChainKeyPair } from "./registry.js";
+export type { ChainModule, ChainWiring, ChainKeyPair } from "./registry.js";
