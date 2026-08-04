@@ -135,6 +135,42 @@ describe("encrypted-file keystore", () => {
     destroyKeystoreFile(path); // no throw on already-gone
   });
 
+  it("rejects a keystore with an out-of-range memlimit before deriving (OOM guard)", () => {
+    const dir = tempDir();
+    const { path, passphrase } = makeKeystore(dir);
+    const file = JSON.parse(readFileSync(path, "utf8"));
+    // A hostile memlimit (~4 TB) would OOM the daemon at crypto_pwhash — which
+    // runs BEFORE the passphrase/AD is ever checked. The bounds check must fire
+    // first with BAD_FORMAT, never attempting the allocation.
+    file.kdf.memlimit = 4_398_046_510_080;
+    writeFileSync(path, JSON.stringify(file), { mode: 0o600 });
+    expect(() => openKeystoreFile(path, passphrase)).toThrowError(
+      expect.objectContaining({ code: "BAD_FORMAT" }),
+    );
+  });
+
+  it("rejects a keystore with an out-of-range opslimit", () => {
+    const dir = tempDir();
+    const { path, passphrase } = makeKeystore(dir);
+    const file = JSON.parse(readFileSync(path, "utf8"));
+    file.kdf.opslimit = 9999;
+    writeFileSync(path, JSON.stringify(file), { mode: 0o600 });
+    expect(() => openKeystoreFile(path, passphrase)).toThrowError(
+      expect.objectContaining({ code: "BAD_FORMAT" }),
+    );
+  });
+
+  it("rejects non-integer / non-numeric KDF parameters", () => {
+    const dir = tempDir();
+    const { path, passphrase } = makeKeystore(dir);
+    const file = JSON.parse(readFileSync(path, "utf8"));
+    file.kdf.memlimit = "268435456";
+    writeFileSync(path, JSON.stringify(file), { mode: 0o600 });
+    expect(() => openKeystoreFile(path, passphrase)).toThrowError(
+      expect.objectContaining({ code: "BAD_FORMAT" }),
+    );
+  });
+
   it("rejects unsupported versions", () => {
     const dir = tempDir();
     const { path, passphrase } = makeKeystore(dir);
