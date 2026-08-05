@@ -34,6 +34,7 @@ import type {
 import type { Policy } from "../core/policy/schema.js";
 import { evaluatePolicy, collectProviderQueries } from "../core/policy/engine.js";
 import { resolveProviders } from "./providerResolver.js";
+import type { PolicyDialect } from "../core/policy/dialect.js";
 import { ValidationError } from "../core/errors.js";
 import {
   parseSignRequest,
@@ -100,6 +101,8 @@ export type AdminResponse =
 export interface DaemonDependencies {
   /** ChainAdapter decode seam (INV-014 enforcement lives there). */
   decode: (input: unknown, context: ChainContext) => DecodedTransaction;
+  /** The chain's policy dialect (#45) — evaluation vocabulary. */
+  dialect: PolicyDialect;
   /** Path-1 signing seam (§5.5). Called only after an allow decision. */
   signer: TransactionSigner;
   /**
@@ -557,10 +560,13 @@ export class SignBoxDaemon {
         agentPermission: runtime.permission,
         chainId: chain.chainId,
         policyVersion: activeVersion,
+        dialect: this.deps.dialect,
       };
       const queries = collectProviderQueries(decoded, activePolicy, baseCtx);
       const evidence =
-        queries.length > 0 ? await resolveProviders(queries, this.deps.relay) : undefined;
+        queries.length > 0
+          ? await resolveProviders(queries, this.deps.relay, this.deps.dialect)
+          : undefined;
 
       // Deterministic policy evaluation.
       const { decision, quotaDemands } = evaluatePolicy(

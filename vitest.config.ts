@@ -10,5 +10,8 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     exclude: ["**/node_modules/**", "dist/**", "contract/**"],
+    // The keystore suites derive Argon2id MODERATE keys (256 MiB, ~1-2s each)
+    // by design; under full-suite parallelism they overrun the 5s default.
+    testTimeout: 60_000,
   },
 });

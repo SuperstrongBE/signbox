@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { PolicyCache } from "../src/daemon/policyCache.js";
 import { canonicalize } from "../src/core/canonical/jcs.js";
 import type { PolicyReader, PolicyRowRaw } from "../src/daemon/chainPolicyReader.js";
+import { xprDialect } from "../src/chains/xpr/dialect.js";
 
 const CHAIN_ID = "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd";
 const NOW = Date.parse("2026-07-30T12:00:00.000Z");
@@ -65,7 +66,7 @@ function dbPath(): string {
 describe("PolicyCache — validation", () => {
   it("fetches, validates and returns a policy", async () => {
     const reader = new FakeReader(rowFor("superagent", 5));
-    const cache = new PolicyCache(":memory:", reader, {}, () => NOW);
+    const cache = new PolicyCache(":memory:", reader, xprDialect, {}, () => NOW);
     const result = await cache.get("superagent", NOW);
     expect("unavailable" in result).toBe(false);
     if (!("unavailable" in result)) {
@@ -123,7 +124,7 @@ describe("PolicyCache — validation", () => {
   it("fails closed when the RPC is unreachable (strict default)", async () => {
     const reader = new FakeReader(rowFor("superagent", 1));
     reader.throwNext = true;
-    const cache = new PolicyCache(":memory:", reader, {}, () => NOW);
+    const cache = new PolicyCache(":memory:", reader, xprDialect, {}, () => NOW);
     expect(await cache.get("superagent", NOW)).toEqual({ unavailable: "POLICY_UNAVAILABLE" });
     cache.close();
   });
@@ -132,7 +133,7 @@ describe("PolicyCache — validation", () => {
 describe("PolicyCache — anti-rollback (§14.5)", () => {
   it("refuses a version below the highest ever seen", async () => {
     const reader = new FakeReader(rowFor("superagent", 7));
-    const cache = new PolicyCache(":memory:", reader, {}, () => NOW);
+    const cache = new PolicyCache(":memory:", reader, xprDialect, {}, () => NOW);
     expect("unavailable" in (await cache.get("superagent", NOW))).toBe(false);
 
     // A lying RPC now serves an older, more permissive version.
@@ -145,13 +146,13 @@ describe("PolicyCache — anti-rollback (§14.5)", () => {
   it("persists the watermark across a restart (same db file)", async () => {
     const path = dbPath();
     const reader = new FakeReader(rowFor("superagent", 9));
-    const first = new PolicyCache(path, reader, {}, () => NOW);
+    const first = new PolicyCache(path, reader, xprDialect, {}, () => NOW);
     await first.get("superagent", NOW);
     first.close();
 
     // New cache instance, same file; RPC tries to downgrade.
     const reader2 = new FakeReader(rowFor("superagent", 8));
-    const second = new PolicyCache(path, reader2, {}, () => NOW + 60_000);
+    const second = new PolicyCache(path, reader2, xprDialect, {}, () => NOW + 60_000);
     expect(await second.get("superagent", NOW + 60_000)).toEqual({
       unavailable: "POLICY_UNAVAILABLE",
     });
@@ -160,7 +161,7 @@ describe("PolicyCache — anti-rollback (§14.5)", () => {
 
   it("accepts an equal or higher version", async () => {
     const reader = new FakeReader(rowFor("superagent", 3));
-    const cache = new PolicyCache(":memory:", reader, {}, () => NOW);
+    const cache = new PolicyCache(":memory:", reader, xprDialect, {}, () => NOW);
     await cache.get("superagent", NOW);
     reader.row = rowFor("superagent", 4);
     const next = await cache.get("superagent", NOW + 60_000);
@@ -173,7 +174,7 @@ describe("PolicyCache — anti-rollback (§14.5)", () => {
 describe("PolicyCache — freshness (30s / 10s)", () => {
   it("does not re-fetch a fresh non-financial policy within 30s", async () => {
     const reader = new FakeReader(rowFor("superagent", 1, { financial: false }));
-    const cache = new PolicyCache(":memory:", reader, {}, () => NOW);
+    const cache = new PolicyCache(":memory:", reader, xprDialect, {}, () => NOW);
     await cache.get("superagent", NOW);
     await cache.get("superagent", NOW + 20_000); // < 30s
     expect(reader.reads).toBe(1);
@@ -182,7 +183,7 @@ describe("PolicyCache — freshness (30s / 10s)", () => {
 
   it("re-fetches a non-financial policy after 30s", async () => {
     const reader = new FakeReader(rowFor("superagent", 1, { financial: false }));
-    const cache = new PolicyCache(":memory:", reader, {}, () => NOW);
+    const cache = new PolicyCache(":memory:", reader, xprDialect, {}, () => NOW);
     await cache.get("superagent", NOW);
     await cache.get("superagent", NOW + 31_000);
     expect(reader.reads).toBe(2);
@@ -191,7 +192,7 @@ describe("PolicyCache — freshness (30s / 10s)", () => {
 
   it("re-confirms a financial policy after 10s (tighter freshness)", async () => {
     const reader = new FakeReader(rowFor("superagent", 1, { financial: true }));
-    const cache = new PolicyCache(":memory:", reader, {}, () => NOW);
+    const cache = new PolicyCache(":memory:", reader, xprDialect, {}, () => NOW);
     await cache.get("superagent", NOW);
     await cache.get("superagent", NOW + 9_000); // < 10s: no refetch
     expect(reader.reads).toBe(1);
@@ -203,9 +204,7 @@ describe("PolicyCache — freshness (30s / 10s)", () => {
   it("controlled grace serves the last-good policy when strict is off", async () => {
     const reader = new FakeReader(rowFor("superagent", 1));
     const cache = new PolicyCache(
-      ":memory:",
-      reader,
-      { strict: false, graceMs: 60_000 },
+      ":memory:", reader, xprDialect, { strict: false, graceMs: 60_000 },
       () => NOW,
     );
     await cache.get("superagent", NOW);
@@ -219,7 +218,7 @@ describe("PolicyCache — freshness (30s / 10s)", () => {
 describe("PolicyCache — enabled flag", () => {
   it("propagates the on-chain enabled flag", async () => {
     const reader = new FakeReader(rowFor("superagent", 1, { enabled: false }));
-    const cache = new PolicyCache(":memory:", reader, {}, () => NOW);
+    const cache = new PolicyCache(":memory:", reader, xprDialect, {}, () => NOW);
     const result = await cache.get("superagent", NOW);
     expect("unavailable" in result).toBe(false);
     if (!("unavailable" in result)) expect(result.enabled).toBe(false);

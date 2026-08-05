@@ -22,6 +22,7 @@
 import Database from "better-sqlite3";
 import { validatePolicy, type Policy } from "../core/policy/schema.js";
 import { verifyStoredPolicy } from "../core/policy/onchain.js";
+import type { PolicyDialect } from "../core/policy/dialect.js";
 import type { PolicyReader } from "./chainPolicyReader.js";
 
 export interface CachedPolicy {
@@ -85,6 +86,7 @@ export class PolicyCache {
   constructor(
     dbPath: string,
     private readonly reader: PolicyReader,
+    private readonly dialect: PolicyDialect,
     options: PolicyCacheOptions = {},
     private readonly now: () => number = Date.now,
   ) {
@@ -136,7 +138,7 @@ export class PolicyCache {
 
     // Integrity gate (§8.6): hash + canonical JCS + schema. The exact same
     // check the CLI dry-run applies, so the two can never disagree.
-    const verified = verifyStoredPolicy(raw.policyjson, raw.policyhash);
+    const verified = verifyStoredPolicy(raw.policyjson, raw.policyhash, this.dialect);
     if (!verified.ok) return { ok: false, reason: verified.reason };
     const policy: Policy = verified.policy;
 
@@ -189,7 +191,7 @@ export class PolicyCache {
     if (row === undefined) return undefined;
     let policy: Policy;
     try {
-      policy = validatePolicy(JSON.parse(row.policyjson));
+      policy = validatePolicy(JSON.parse(row.policyjson), this.dialect);
     } catch {
       return undefined;
     }

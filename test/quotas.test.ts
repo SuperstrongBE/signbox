@@ -15,6 +15,7 @@ import type {
   SignedTransactionResult,
   TransactionSigner,
 } from "../src/core/types.js";
+import { xprDialect } from "../src/chains/xpr/dialect.js";
 
 const CHAIN_ID = "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd";
 const CHAIN: ChainContext = { chain: "XPR", network: "testnet", chainId: CHAIN_ID };
@@ -242,7 +243,7 @@ describe("daemon pipeline with quota journal", () => {
           },
         },
       ],
-    });
+    }, xprDialect);
   }
 
   function makeRequest(n: number, to = "alice"): string {
@@ -277,6 +278,7 @@ describe("daemon pipeline with quota journal", () => {
     daemon = new SignBoxDaemon(
       { socketPath: join(mkdtempSync(join(tmpdir(), "signbox-daemon-")), "signbox.sock") },
       {
+        dialect: xprDialect,
         decode: decodeXprTransaction,
         signer,
         quotas: new QuotaJournal(":memory:"),

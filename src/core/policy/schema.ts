@@ -8,13 +8,8 @@
 
 import { Ajv, type ValidateFunction } from "ajv";
 import { ValidationError } from "../errors.js";
-import { parseAsset } from "../asset.js";
-import {
-  CHAIN_ID_PATTERN,
-  MATCH_PATH_PATTERN,
-  RULE_ID_PATTERN,
-  SELECT_FIELD_PATTERN,
-} from "./vocabulary.js";
+import { RULE_ID_PATTERN } from "./vocabulary.js";
+import type { PolicyDialect } from "./dialect.js";
 
 export type MatchOperator =
   | { lte: string }
@@ -37,7 +32,8 @@ export type MatchValue = string | MatchOperator;
  * action being evaluated. `scope` defaults to `contract` when omitted.
  */
 export interface TableRowProvider {
-  provider: "xpr.rpc.tableRow";
+  /** The dialect's provider namespace (validated per-dialect at load time). */
+  provider: string;
   args: { contract: string; scope?: string; table: string; key: string };
   /** Field of the fetched row to test (single level). */
   select: string;
@@ -134,7 +130,11 @@ const matchValueSchema = {
   ],
 } as const;
 
-const policyJsonSchema = {
+/** The policy JSON Schema for one dialect — the skeleton is shared, the
+ * vocabularies (match paths, chain id, select fields, provider namespace)
+ * come from the dialect (#45). */
+function policyJsonSchemaFor(dialect: PolicyDialect) {
+  return {
   type: "object",
   additionalProperties: false,
   required: ["schemaVersion", "default", "chain", "rules"],
@@ -148,7 +148,7 @@ const policyJsonSchema = {
       required: ["name", "chainId"],
       properties: {
         name: { type: "string", minLength: 1, maxLength: 32 },
-        chainId: { type: "string", pattern: CHAIN_ID_PATTERN },
+        chainId: { type: "string", pattern: dialect.chainIdPattern },
       },
     },
     rules: {
@@ -165,7 +165,7 @@ const policyJsonSchema = {
             type: "object",
             minProperties: 1,
             maxProperties: 32,
-            propertyNames: { pattern: MATCH_PATH_PATTERN },
+            propertyNames: { pattern: dialect.matchPathPattern },
             additionalProperties: matchValueSchema,
           },
           limits: {
@@ -191,7 +191,7 @@ const policyJsonSchema = {
               additionalProperties: false,
               required: ["provider", "args", "select", "op", "value"],
               properties: {
-                provider: { const: "xpr.rpc.tableRow" },
+                provider: { const: dialect.providerNamespace },
                 args: {
                   type: "object",
                   additionalProperties: false,
@@ -203,7 +203,7 @@ const policyJsonSchema = {
                     key: { type: "string", minLength: 1, maxLength: 64 },
                   },
                 },
-                select: { type: "string", pattern: SELECT_FIELD_PATTERN },
+                select: { type: "string", pattern: dialect.selectFieldPattern },
                 op: { enum: ["contains", "eq"] },
                 value: { type: "string", minLength: 1, maxLength: 256 },
               },
@@ -213,17 +213,29 @@ const policyJsonSchema = {
       },
     },
   },
-} as const;
+  } as const;
+}
 
 const ajv = new Ajv({ strict: true, allErrors: false });
-const validateSchema: ValidateFunction = ajv.compile(policyJsonSchema);
+// One compiled validator per dialect (keyed by its vocabulary fingerprint).
+const validators = new Map<string, ValidateFunction>();
+function validatorFor(dialect: PolicyDialect): ValidateFunction {
+  const key = `${dialect.matchPathPattern}\u0000${dialect.chainIdPattern}\u0000${dialect.selectFieldPattern}\u0000${dialect.providerNamespace}`;
+  let validate = validators.get(key);
+  if (validate === undefined) {
+    validate = ajv.compile(policyJsonSchemaFor(dialect));
+    validators.set(key, validate);
+  }
+  return validate;
+}
 
 /**
  * Validate a policy document. Throws ValidationError on ANY deviation:
  * unknown field, duplicate rule id, unparsable limit asset, deny rule with
  * limits. Returns the typed policy on success.
  */
-export function validatePolicy(input: unknown): Policy {
+export function validatePolicy(input: unknown, dialect: PolicyDialect): Policy {
+  const validateSchema = validatorFor(dialect);
   if (!validateSchema(input)) {
     const detail = validateSchema.errors?.[0];
     throw new ValidationError(
@@ -251,7 +263,7 @@ export function validatePolicy(input: unknown): Policy {
         const raw = limits[field];
         if (raw !== undefined) {
           try {
-            parseAsset(raw);
+            dialect.parseAssetLimit(raw);
           } catch {
             throw new ValidationError(`rule "${rule.id}": ${field} is not a valid asset string`);
           }

@@ -16,6 +16,7 @@ import type {
   SignedTransactionResult,
   TransactionSigner,
 } from "../src/core/types.js";
+import { xprDialect } from "../src/chains/xpr/dialect.js";
 
 const CHAIN_ID = "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd";
 const CHAIN: ChainContext = { chain: "XPR", network: "testnet", chainId: CHAIN_ID };
@@ -105,10 +106,10 @@ describe("daemon with on-chain policy cache (§14)", () => {
 
   function makeDaemon(reader: PolicyReader): SignBoxDaemon {
     signer = new FakeSigner();
-    const cache = new PolicyCache(":memory:", reader, {}, () => NOW);
+    const cache = new PolicyCache(":memory:", reader, xprDialect, {}, () => NOW);
     const daemon = new SignBoxDaemon(
       { socketPath: join(mkdtempSync(join(tmpdir(), "signbox-daemon-")), "s.sock") },
-      { decode: decodeXprTransaction, signer, policyCache: cache, now: () => NOW },
+      { dialect: xprDialect, decode: decodeXprTransaction, signer, policyCache: cache, now: () => NOW },
     );
     // The registered policy is a deny-all placeholder: the cache must override
     // it with the on-chain policy, or nothing would ever be allowed.

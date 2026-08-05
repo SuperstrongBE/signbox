@@ -14,6 +14,7 @@ import type {
   TransactionSigner,
 } from "../src/core/types.js";
 import type { SignResponseJson } from "../src/daemon/protocol.js";
+import { xprDialect } from "../src/chains/xpr/dialect.js";
 
 const CHAIN_ID = "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd";
 const CHAIN: ChainContext = { chain: "XPR", network: "testnet", chainId: CHAIN_ID };
@@ -50,7 +51,7 @@ function statelessPolicy() {
         limits: { maxPerTransaction: "1000.0000 XPR" },
       },
     ],
-  });
+  }, xprDialect);
 }
 
 function statefulPolicy() {
@@ -121,6 +122,7 @@ describe("SignBox daemon pipeline", () => {
     daemon = new SignBoxDaemon(
       { socketPath: join(mkdtempSync(join(tmpdir(), "signbox-daemon-")), "signbox.sock") },
       {
+        dialect: xprDialect,
         decode: (input, context) => decodeXprTransaction(input, context),
         signer,
         now: () => nowMs,
@@ -204,7 +206,7 @@ describe("SignBox daemon pipeline", () => {
   it("fails closed when the policy needs stateful quotas and no journal exists (§8.5)", async () => {
     const stateful = new SignBoxDaemon(
       { socketPath: join(mkdtempSync(join(tmpdir(), "signbox-daemon-")), "signbox.sock") },
-      { decode: decodeXprTransaction, signer, now: () => nowMs },
+      { dialect: xprDialect, decode: decodeXprTransaction, signer, now: () => nowMs },
     );
     stateful.registerAgent(agentRuntime({ policy: statefulPolicy() }));
     const response = await stateful.handleRequest(makeRequest());
@@ -253,7 +255,7 @@ describe("SignBox daemon over a real Unix socket", () => {
     socketPath = join(mkdtempSync(join(tmpdir(), "signbox-daemon-")), "signbox.sock");
     daemon = new SignBoxDaemon(
       { socketPath },
-      { decode: decodeXprTransaction, signer, now: () => BASE_NOW },
+      { dialect: xprDialect, decode: decodeXprTransaction, signer, now: () => BASE_NOW },
     );
     daemon.registerAgent({
       agent: "superagent",
@@ -314,7 +316,7 @@ describe("SignBox daemon over a real Unix socket", () => {
   it("refuses to start on an existing socket path", async () => {
     const second = new SignBoxDaemon(
       { socketPath },
-      { decode: decodeXprTransaction, signer, now: () => BASE_NOW },
+      { dialect: xprDialect, decode: decodeXprTransaction, signer, now: () => BASE_NOW },
     );
     await expect(second.start()).rejects.toThrow();
   });

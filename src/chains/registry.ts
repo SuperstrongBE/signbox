@@ -30,6 +30,7 @@ import type { ChainReadRelay } from "../daemon/chainRelay.js";
 import type { PolicyReader } from "../daemon/chainPolicyReader.js";
 import type { OnboardingBackend } from "../onboarding/flow.js";
 import type { KeystoreBackend } from "../keystore/backend.js";
+import type { PolicyDialect } from "../core/policy/dialect.js";
 
 /** Endpoint + pinned chain id — what every network-touching factory needs. */
 export interface ChainWiring {
@@ -58,6 +59,9 @@ export interface ChainModule {
    * address for future chains).
    */
   readonly registryLocatorPattern: RegExp;
+
+  /** The chain's policy dialect (#45): evaluation + validation vocabulary. */
+  readonly dialect: PolicyDialect;
 
   /** Normalize + validate a raw unserialized JSON transaction (INV-014). */
   decode(input: unknown, context: ChainContext): DecodedTransaction;
