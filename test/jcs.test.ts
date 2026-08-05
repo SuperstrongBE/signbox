@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { canonicalize, canonicalSha256Hex } from "../src/core/canonical/jcs.js";
+import { canonicalize } from "../src/core/canonical/jcs.js";
+import { canonicalSha256Hex } from "../src/core/canonical/hash.js";
 import { CanonicalizationError } from "../src/core/errors.js";
 
 describe("RFC 8785 canonicalization", () => {

@@ -31,11 +31,10 @@ export interface CompileResult {
   warnings: string[];
 }
 
-// The daemon's closed vocabularies (schema.ts) — validate custom paths here so
-// the editor never pushes a policy the daemon would reject as schema_invalid.
-const MATCH_PATH_RE =
-  /^(contract|action|authorization\.(actor|permission)|data\.[a-zA-Z0-9_]{1,64}(\.[a-zA-Z0-9_]{1,64}){0,4})$/;
-const SELECT_FIELD_RE = /^[a-zA-Z0-9_]{1,64}$/;
+// The daemon's closed vocabularies — imported from the SAME module the
+// daemon's validator uses (src/core/policy/vocabulary.ts), so the editor can
+// never produce a path the daemon rejects as schema_invalid (#45).
+import { MATCH_PATH_RE, SELECT_FIELD_RE } from "@sbx-core/policy/vocabulary";
 
 function listOf(s: string): string[] {
   return s.split(",").map((x) => x.trim()).filter(Boolean);
@@ -188,15 +187,9 @@ export function compilePolicy(nodes: GraphNode[], wires: Wire[], chainId: string
   };
 }
 
-/** Canonical-ish stringify (sorted keys) for the prototype policyhash. */
-export function canonicalize(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${canonicalize(obj[k])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
+// THE daemon's canonicalizer (RFC 8785 JCS), same source file — the pushed
+// policyjson is byte-identical to what verifyStoredPolicy re-canonicalizes.
+export { canonicalize } from "@sbx-core/canonical/jcs";
 
 export async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));

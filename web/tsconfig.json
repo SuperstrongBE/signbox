@@ -12,8 +12,9 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
+    "paths": { "@sbx-core/*": ["../src/core/*"] },
     "noUnusedLocals": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src", "../src/core/canonical/jcs.ts", "../src/core/policy/vocabulary.ts", "../src/core/errors.ts"]
 }
