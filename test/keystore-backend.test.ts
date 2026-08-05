@@ -1,7 +1,8 @@
 /**
- * EncryptedFileKeystore backend (#46) — lifecycle behavior that used to live
- * inline in the daemon runner: discovery, bounded passphrase retries,
- * duplicate refusal, metadata-without-unlock, scoped secret access, wipe.
+ * EncryptedFileKeystore backend (#46) — lifecycle (discovery, bounded
+ * passphrase retries, duplicate refusal, metadata-without-unlock, wipe) and
+ * the signing boundary: signDigest / verifyKeyBinding, with the private key
+ * never crossing the interface.
  */
 
 import { describe, expect, it } from "vitest";
@@ -10,12 +11,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createKeystoreFile, type KeystoreMetadata } from "../src/keystore/encryptedFile.js";
 import { EncryptedFileKeystore } from "../src/keystore/encryptedFileBackend.js";
+import { generateK1KeyPair } from "../src/chains/xpr/keygen.js";
 
 const PASSPHRASE = "correct horse battery staple";
 
-function meta(agent: string): KeystoreMetadata {
+function meta(agent: string, publicKey: string): KeystoreMetadata {
   return {
-    publicKey: `PUB_K1_${agent}`,
+    publicKey,
     exportPolicy: "non-exportable",
     chain: { chain: "XPR", network: "testnet", chainId: "a".repeat(64) },
     agent,
@@ -24,43 +26,37 @@ function meta(agent: string): KeystoreMetadata {
   };
 }
 
-function makeDir(agents: string[]): string {
+/** Build a keystore dir with REAL K1 keys, one per agent. */
+async function makeDir(agents: string[]): Promise<{ dir: string; pubs: Map<string, string> }> {
   const dir = mkdtempSync(join(tmpdir(), "signbox-backend-"));
+  const pubs = new Map<string, string>();
   for (const agent of agents) {
+    const pair = await generateK1KeyPair();
+    pubs.set(agent, pair.publicKey);
     createKeystoreFile(
       join(dir, `${agent}.keystore.json`),
-      Buffer.from(`secret-of-${agent}`),
+      Buffer.from(pair.wif, "utf8"),
       Buffer.from(PASSPHRASE),
-      meta(agent),
+      meta(agent, pair.publicKey),
     );
   }
-  return dir;
+  return { dir, pubs };
 }
 
 const passphraseCtx = { kind: "passphrase" as const, passphraseFor: async () => Buffer.from(PASSPHRASE) };
 
 describe("EncryptedFileKeystore", () => {
-  it("lists public metadata without unlocking", () => {
-    const backend = new EncryptedFileKeystore(makeDir(["aagent", "bagent"]));
-    const keys = backend.listKeys();
-    expect(keys.map((k) => k.agent)).toEqual(["aagent", "bagent"]);
-    expect(backend.readMetadata("bagent")?.publicKey).toBe("PUB_K1_bagent");
+  it("lists public metadata without unlocking", async () => {
+    const { dir, pubs } = await makeDir(["aagent", "bagent"]);
+    const backend = new EncryptedFileKeystore(dir);
+    expect(backend.listKeys().map((k) => k.agent)).toEqual(["aagent", "bagent"]);
+    expect(backend.readMetadata("bagent")?.publicKey).toBe(pubs.get("bagent"));
     expect(backend.readMetadata("nobody")).toBeUndefined();
   });
 
-  it("unlocks every keystore and scopes secret access by key id", async () => {
-    const backend = new EncryptedFileKeystore(makeDir(["aagent", "bagent"]));
-    const unlocked = await backend.unlock(passphraseCtx);
-    expect(unlocked.map((k) => k.agent)).toEqual(["aagent", "bagent"]);
-    const value = backend.withSecret("bagent", (secret) => secret.toString("utf8"));
-    expect(value).toBe("secret-of-bagent");
-    expect(() => backend.withSecret("nobody", () => 0)).toThrowError(
-      expect.objectContaining({ code: "FILE_NOT_FOUND" }),
-    );
-  });
-
   it("re-prompts on a wrong passphrase and caps the attempts", async () => {
-    const backend = new EncryptedFileKeystore(makeDir(["aagent"]));
+    const { dir } = await makeDir(["aagent"]);
+    const backend = new EncryptedFileKeystore(dir);
     const attempts: number[] = [];
     await expect(
       backend.unlock({
@@ -75,33 +71,76 @@ describe("EncryptedFileKeystore", () => {
   });
 
   it("recovers when a retry provides the right passphrase", async () => {
-    const backend = new EncryptedFileKeystore(makeDir(["aagent"]));
+    const { dir } = await makeDir(["aagent"]);
+    const backend = new EncryptedFileKeystore(dir);
     const unlocked = await backend.unlock({
       kind: "passphrase",
-      passphraseFor: async (_label, attempt) =>
-        Buffer.from(attempt < 3 ? "typo" : PASSPHRASE),
+      passphraseFor: async (_label, attempt) => Buffer.from(attempt < 3 ? "typo" : PASSPHRASE),
     });
     expect(unlocked.map((k) => k.agent)).toEqual(["aagent"]);
   });
 
-  it("wipes all secrets (idempotent)", async () => {
-    const backend = new EncryptedFileKeystore(makeDir(["aagent"]));
+  it("signs a digest without exposing the key, verifiable against the declared pubkey", async () => {
+    const { dir } = await makeDir(["aagent"]);
+    const backend = new EncryptedFileKeystore(dir);
     await backend.unlock(passphraseCtx);
-    backend.wipe();
-    backend.wipe();
-    expect(() => backend.withSecret("aagent", () => 0)).toThrowError(
+    const digest = new Uint8Array(32).fill(7);
+    const sig = await backend.signDigest("aagent", digest, "secp256k1-canonical");
+    expect(sig.length).toBe(65); // [recoveryId, r, s]
+    expect(sig[0]).toBeGreaterThanOrEqual(0);
+    expect(sig[0]).toBeLessThanOrEqual(3);
+    // The binding check proves the signing key IS the declared one.
+    await expect(backend.verifyKeyBinding("aagent")).resolves.toBe(true);
+  });
+
+  it("refuses signing for a locked/unknown key and unsupported schemes", async () => {
+    const { dir } = await makeDir(["aagent"]);
+    const backend = new EncryptedFileKeystore(dir);
+    const digest = new Uint8Array(32);
+    // Not unlocked yet → no key material available.
+    await expect(backend.signDigest("aagent", digest, "secp256k1-canonical")).rejects.toThrowError(
       expect.objectContaining({ code: "FILE_NOT_FOUND" }),
+    );
+    await backend.unlock(passphraseCtx);
+    await expect(backend.signDigest("nobody", digest, "secp256k1-canonical")).rejects.toThrowError(
+      expect.objectContaining({ code: "FILE_NOT_FOUND" }),
+    );
+    // The file stores a K1 WIF — ed25519 cannot be served from it.
+    await expect(backend.signDigest("aagent", digest, "ed25519")).rejects.toThrowError(
+      expect.objectContaining({ code: "UNSUPPORTED" }),
     );
   });
 
-  it("stages signDigest / verifyKeyBinding as UNSUPPORTED until the provider swap", async () => {
-    const backend = new EncryptedFileKeystore(makeDir(["aagent"]));
-    await backend.unlock(passphraseCtx);
-    await expect(backend.signDigest("aagent", new Uint8Array(32), "secp256k1")).rejects.toThrowError(
-      expect.objectContaining({ code: "UNSUPPORTED" }),
+  it("verifyKeyBinding fails when the declared public key does not match (#39)", async () => {
+    const { dir } = await makeDir(["aagent"]);
+    // Rebuild the keystore with a DIFFERENT declared pubkey (fresh dir, since
+    // metadata is AAD-bound and cannot be tampered in place).
+    const other = await generateK1KeyPair();
+    const dir2 = mkdtempSync(join(tmpdir(), "signbox-backend-"));
+    const pair = await generateK1KeyPair();
+    createKeystoreFile(
+      join(dir2, "bagent.keystore.json"),
+      Buffer.from(pair.wif, "utf8"),
+      Buffer.from(PASSPHRASE),
+      meta("bagent", other.publicKey), // declares someone else's key
     );
-    await expect(backend.verifyKeyBinding("aagent")).rejects.toThrowError(
-      expect.objectContaining({ code: "UNSUPPORTED" }),
+    const backend = new EncryptedFileKeystore(dir2);
+    await backend.unlock(passphraseCtx);
+    await expect(backend.verifyKeyBinding("bagent")).resolves.toBe(false);
+    // Control: the honest dir still verifies.
+    const honest = new EncryptedFileKeystore(dir);
+    await honest.unlock(passphraseCtx);
+    await expect(honest.verifyKeyBinding("aagent")).resolves.toBe(true);
+  });
+
+  it("wipes all secrets (idempotent)", async () => {
+    const { dir } = await makeDir(["aagent"]);
+    const backend = new EncryptedFileKeystore(dir);
+    await backend.unlock(passphraseCtx);
+    backend.wipe();
+    backend.wipe();
+    await expect(backend.signDigest("aagent", new Uint8Array(32), "secp256k1-canonical")).rejects.toThrowError(
+      expect.objectContaining({ code: "FILE_NOT_FOUND" }),
     );
   });
 

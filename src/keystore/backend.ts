@@ -8,17 +8,20 @@
  * the local encrypted-file backend implements it so that even locally the
  * key stops crossing module boundaries.
  *
- * Staging note: `signDigest` and `verifyKeyBinding` are implemented together
- * with the chain-side signature-provider swap (#46 phase A, task "XPR
- * SignatureProvider over signDigest") — landing the raw-curve crypto and its
- * consumer in one reviewable change. Until then the encrypted-file backend
- * refuses them with KeystoreError("UNSUPPORTED").
+ * `signDigest` returns a chain-neutral signature layout (for secp256k1
+ * variants: 65 bytes `[recoveryId, r, s]`); chain-side code adds its own
+ * header/encoding. The key material itself never crosses this boundary in
+ * either direction (INV-002, extended).
  */
 
 import type { KeystoreMetadata } from "./encryptedFile.js";
 
-/** Signature schemes a backend may support (per key). */
-export type SignatureScheme = "secp256k1" | "ed25519";
+/**
+ * Signature schemes a backend may support (per key).
+ * `secp256k1-canonical` is the Antelope-family variant: deterministic
+ * signatures ground until r and s clear the canonicality bits.
+ */
+export type SignatureScheme = "secp256k1" | "secp256k1-canonical" | "ed25519";
 
 /**
  * How a backend authenticates before it can operate. Today: an interactive
