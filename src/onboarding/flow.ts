@@ -19,7 +19,8 @@
  * testable without a live chain.
  */
 
-import { canonicalize, canonicalSha256Hex } from "../core/canonical/jcs.js";
+import { canonicalize } from "../core/canonical/jcs.js";
+import { canonicalSha256Hex } from "../core/canonical/hash.js";
 import { emptyPolicy } from "../core/policy/schema.js";
 import { SignBoxError } from "../core/errors.js";
 import type { ChainContext, ExportPolicy } from "../core/types.js";

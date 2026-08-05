@@ -11,9 +11,12 @@
  *
  * Any canonicalization divergence produces a hash mismatch, hence a refusal
  * (fail closed) — never a tolerance.
+ *
+ * PURE module (no Node APIs): it is imported by the web editor too, so the
+ * daemon and the companion canonicalize with the SAME function — parity by
+ * construction, not by hand-kept copies (#45). Hashing lives in ./hash.ts.
  */
 
-import { createHash } from "node:crypto";
 import { CanonicalizationError } from "../errors.js";
 
 export function canonicalize(value: unknown): string {
@@ -47,9 +50,4 @@ export function canonicalize(value: unknown): string {
     default:
       throw new CanonicalizationError(`unsupported type: ${typeof value}`);
   }
-}
-
-/** SHA-256 of the canonical UTF-8 bytes, lowercase hex (used for policyHash). */
-export function canonicalSha256Hex(value: unknown): string {
-  return createHash("sha256").update(Buffer.from(canonicalize(value), "utf8")).digest("hex");
 }

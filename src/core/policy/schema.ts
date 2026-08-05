@@ -9,6 +9,12 @@
 import { Ajv, type ValidateFunction } from "ajv";
 import { ValidationError } from "../errors.js";
 import { parseAsset } from "../asset.js";
+import {
+  CHAIN_ID_PATTERN,
+  MATCH_PATH_PATTERN,
+  RULE_ID_PATTERN,
+  SELECT_FIELD_PATTERN,
+} from "./vocabulary.js";
 
 export type MatchOperator =
   | { lte: string }
@@ -78,10 +84,6 @@ export interface Policy {
   maxActionsPerTransaction?: number;
 }
 
-/** Match paths are a closed vocabulary — unknown paths are schema errors. */
-const MATCH_PATH_PATTERN =
-  "^(contract|action|authorization\\.(actor|permission)|data\\.[a-zA-Z0-9_]{1,64}(\\.[a-zA-Z0-9_]{1,64}){0,4})$";
-
 const matchValueSchema = {
   oneOf: [
     { type: "string", minLength: 1, maxLength: 256 },
@@ -146,7 +148,7 @@ const policyJsonSchema = {
       required: ["name", "chainId"],
       properties: {
         name: { type: "string", minLength: 1, maxLength: 32 },
-        chainId: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        chainId: { type: "string", pattern: CHAIN_ID_PATTERN },
       },
     },
     rules: {
@@ -157,7 +159,7 @@ const policyJsonSchema = {
         additionalProperties: false,
         required: ["id", "effect", "match"],
         properties: {
-          id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,63}$" },
+          id: { type: "string", pattern: RULE_ID_PATTERN },
           effect: { enum: ["allow", "deny"] },
           match: {
             type: "object",
@@ -201,7 +203,7 @@ const policyJsonSchema = {
                     key: { type: "string", minLength: 1, maxLength: 64 },
                   },
                 },
-                select: { type: "string", pattern: "^[a-zA-Z0-9_]{1,64}$" },
+                select: { type: "string", pattern: SELECT_FIELD_PATTERN },
                 op: { enum: ["contains", "eq"] },
                 value: { type: "string", minLength: 1, maxLength: 256 },
               },
