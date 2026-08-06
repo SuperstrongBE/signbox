@@ -9,7 +9,7 @@
  */
 
 import { JsonRpc } from "@proton/js";
-import { pinChainId } from "./adapter.js";
+import { verifiedRpc } from "./rpc.js";
 import type { PolicyReader, PolicyRowRaw } from "../../daemon/chainPolicyReader.js";
 
 export interface XprPolicyReaderOptions {
@@ -23,8 +23,9 @@ export class XprPolicyReader implements PolicyReader {
   constructor(private readonly options: XprPolicyReaderOptions) {}
 
   async read(agent: string): Promise<PolicyRowRaw | null> {
-    const rpc = new JsonRpc(this.options.endpoints);
-    pinChainId(rpc, this.options.chainId);
+    // Verified-before-use (#40): the chain-id + liveness check actually runs
+    // before the policy rows are trusted, not merely wraps an unused method.
+    const rpc = verifiedRpc(new JsonRpc(this.options.endpoints), { chainId: this.options.chainId });
 
     const result = (await rpc.get_table_rows({
       code: this.options.contractAccount,
