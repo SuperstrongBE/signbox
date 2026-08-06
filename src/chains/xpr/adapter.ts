@@ -27,6 +27,7 @@ import { SignBoxError, ValidationError } from "../../core/errors.js";
 import { canonicalize } from "../../core/canonical/jcs.js";
 import { decodeXprTransaction } from "./decode.js";
 import { KeystoreSignatureProvider } from "./signatureProvider.js";
+import { verifiedRpc } from "./rpc.js";
 import { XPR_CHAIN, XPR_NETWORKS } from "./networks.js";
 import type { KeystoreBackend } from "../../keystore/backend.js";
 import type {
@@ -95,8 +96,7 @@ export function pinChainId(rpc: JsonRpc, chainId: string): void {
 }
 
 function defaultApiFactory(key: KeyHandle, options: XprSignerOptions): Api {
-  const rpc = new JsonRpc(options.endpoints);
-  pinChainId(rpc, options.chainId);
+  const rpc = verifiedRpc(new JsonRpc(options.endpoints), { chainId: options.chainId });
 
   return new Api({
     rpc,

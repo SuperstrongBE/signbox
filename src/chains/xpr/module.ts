@@ -8,7 +8,8 @@
 import { JsonRpc } from "@proton/js";
 import type { ChainContext, DecodedTransaction } from "../../core/types.js";
 import { SignBoxError } from "../../core/errors.js";
-import { XprTransactionSigner, pinChainId } from "./adapter.js";
+import { XprTransactionSigner } from "./adapter.js";
+import { verifiedRpc } from "./rpc.js";
 import { decodeXprTransaction } from "./decode.js";
 import { generateK1KeyPair } from "./keygen.js";
 import { XPR_CHAIN, XPR_NETWORKS } from "./networks.js";
@@ -77,8 +78,7 @@ export const xprModule: ChainModule = {
         "signed transaction must contain { signatures, packedTransaction } as produced by sign",
       );
     }
-    const rpc = new JsonRpc(wiring.endpoints);
-    pinChainId(rpc, wiring.chainId);
+    const rpc = verifiedRpc(new JsonRpc(wiring.endpoints), { chainId: wiring.chainId });
     await rpc.get_info(); // validates the pinned chain id before any broadcast (INV-009)
     return rpc.push_transaction({
       signatures: payload.signatures,
@@ -87,8 +87,7 @@ export const xprModule: ChainModule = {
   },
 
   async checkEndpoint(wiring: ChainWiring): Promise<{ headTimeMs?: number }> {
-    const rpc = new JsonRpc(wiring.endpoints);
-    pinChainId(rpc, wiring.chainId);
+    const rpc = verifiedRpc(new JsonRpc(wiring.endpoints), { chainId: wiring.chainId });
     const info = (await rpc.get_info()) as { head_block_time?: string };
     return info.head_block_time !== undefined
       ? { headTimeMs: Date.parse(`${info.head_block_time}Z`) }
@@ -96,8 +95,7 @@ export const xprModule: ChainModule = {
   },
 
   async checkPolicyRegistry(wiring: ChainWiring, registryLocator: string): Promise<void> {
-    const rpc = new JsonRpc(wiring.endpoints);
-    pinChainId(rpc, wiring.chainId);
-    await rpc.get_abi(registryLocator); // throws when the contract isn't deployed
+    const rpc = verifiedRpc(new JsonRpc(wiring.endpoints), { chainId: wiring.chainId });
+    await rpc.get_abi(registryLocator); // verified-before-use, then throws when not deployed
   },
 };

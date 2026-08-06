@@ -5,7 +5,7 @@
  */
 
 import { JsonRpc } from "@proton/js";
-import { pinChainId } from "./adapter.js";
+import { verifiedRpc } from "./rpc.js";
 import type { BroadcastOutcome, TransactionBroadcaster } from "../../daemon/broadcaster.js";
 
 export interface XprBroadcasterOptions {
@@ -23,8 +23,7 @@ export class XprTransactionBroadcaster implements TransactionBroadcaster {
       return { status: "rejected", reason: "malformed signed transaction" };
     }
 
-    const rpc = new JsonRpc(this.options.endpoints);
-    pinChainId(rpc, this.options.chainId);
+    const rpc = verifiedRpc(new JsonRpc(this.options.endpoints), { chainId: this.options.chainId });
     try {
       await rpc.get_info(); // validates the pinned chain id before any broadcast
       const receipt = await rpc.push_transaction({

@@ -15,7 +15,7 @@ import { JsonRpc, Numeric } from "@proton/js";
 // bare specifier breaks under Node ESM; import the ESM build directly.
 import { SigningRequest } from "@proton/signing-request/lib/proton-signing-request.m.js";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
-import { pinChainId } from "./adapter.js";
+import { verifiedRpc } from "./rpc.js";
 import { buildOnboardingActions, summarizeActions } from "./onboardingActions.js";
 import type {
   BuiltRequest,
@@ -56,9 +56,9 @@ export class XprOnboardingBackend implements OnboardingBackend {
   }
 
   private rpc(): JsonRpc {
-    const rpc = new JsonRpc(this.opts.endpoints);
-    pinChainId(rpc, this.opts.chainId);
-    return rpc;
+    // Verified-before-use (#40): every onboarding read runs behind a fresh
+    // pinned + liveness-checked get_info.
+    return verifiedRpc(new JsonRpc(this.opts.endpoints), { chainId: this.opts.chainId });
   }
 
   async authorityExists(authority: string): Promise<boolean> {
