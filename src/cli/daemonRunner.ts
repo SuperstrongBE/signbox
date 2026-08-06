@@ -72,15 +72,16 @@ export async function startDaemonFromConfig(
   const quotas = new QuotaJournal(config.stateDbPath);
   const policyReader =
     overrides.policyReader ?? chainModule.createPolicyReader(wiring, config.signboxContract);
-  const policyCache = new PolicyCache(config.stateDbPath, policyReader, {}, overrides.now);
+  const policyCache = new PolicyCache(config.stateDbPath, policyReader, chainModule.dialect, {}, overrides.now);
   const audit = new AuditLog(config.stateDbPath);
 
   const decode = chainModule.decode.bind(chainModule);
+  const dialect = chainModule.dialect;
   const daemon = new SignBoxDaemon(
     { socketPath: config.socketPath, adminSocketPath: config.adminSocketPath },
     overrides.now === undefined
-      ? { decode, signer, broadcaster, relay, quotas, policyCache, audit }
-      : { decode, signer, broadcaster, relay, quotas, policyCache, audit, now: overrides.now },
+      ? { decode, dialect, signer, broadcaster, relay, quotas, policyCache, audit }
+      : { decode, dialect, signer, broadcaster, relay, quotas, policyCache, audit, now: overrides.now },
   );
 
   const wipeAll = (): void => keystore.wipe();

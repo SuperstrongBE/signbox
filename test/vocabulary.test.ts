@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { xprDialect } from "../src/chains/xpr/dialect.js";
 import { MATCH_PATH_RE, RULE_ID_RE, SELECT_FIELD_RE } from "../src/core/policy/vocabulary.js";
 import { validatePolicy } from "../src/core/policy/schema.js";
 
@@ -25,14 +26,14 @@ describe("policy vocabulary — regex ↔ validator parity", () => {
   it("accepts exactly what the validator accepts (match paths)", () => {
     for (const key of ACCEPTED) {
       expect(MATCH_PATH_RE.test(key), key).toBe(true);
-      expect(() => validatePolicy(policyWithMatchKey(key)), key).not.toThrow();
+      expect(() => validatePolicy(policyWithMatchKey(key), xprDialect), key).not.toThrow();
     }
   });
 
   it("rejects exactly what the validator rejects (match paths)", () => {
     for (const key of REJECTED) {
       expect(MATCH_PATH_RE.test(key), key).toBe(false);
-      expect(() => validatePolicy(policyWithMatchKey(key)), key).toThrow();
+      expect(() => validatePolicy(policyWithMatchKey(key), xprDialect), key).toThrow();
     }
   });
 

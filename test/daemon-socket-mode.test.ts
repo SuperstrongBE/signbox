@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { xprDialect } from "../src/chains/xpr/dialect.js";
 
 const hoisted = vi.hoisted(() => ({
   /** path → mode the file had when the daemon called chmodSync on it. */
@@ -50,6 +51,7 @@ function makeDaemon(cfg: {
   socketMode?: number;
 }): SignBoxDaemon {
   return new SignBoxDaemon(cfg, {
+    dialect: xprDialect,
     decode: () => {
       throw new Error("not used");
     },

@@ -16,6 +16,7 @@ import { XprTransactionBroadcaster } from "./broadcaster.js";
 import { XprChainReadRelay } from "./relay.js";
 import { XprPolicyReader } from "./policyReader.js";
 import { XprOnboardingBackend } from "./onboarding.js";
+import { xprDialect } from "./dialect.js";
 import type { ChainModule, ChainWiring } from "../registry.js";
 import type { KeystoreBackend } from "../../keystore/backend.js";
 
@@ -30,6 +31,8 @@ export const xprModule: ChainModule = {
   // an Antelope account (a-z, 1-5, dots, ≤ 12 chars).
   chainIdPattern: /^[0-9a-f]{64}$/,
   registryLocatorPattern: /^[a-z1-5.]{1,12}$/,
+
+  dialect: xprDialect,
 
   decode(input: unknown, context: ChainContext): DecodedTransaction {
     return decodeXprTransaction(input, context);

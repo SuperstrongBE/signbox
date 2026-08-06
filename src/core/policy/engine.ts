@@ -17,19 +17,16 @@
 
 import type { DecodedAction, DecodedTransaction, Decision, DenyCode } from "../types.js";
 import type { MatchValue, Policy, PolicyRule, TableRowProvider } from "./schema.js";
+import type { PolicyDialect } from "./dialect.js";
 import { AmbiguousValueError, AssetError, ProviderUnavailableError } from "../errors.js";
 import { canonicalize } from "../canonical/jcs.js";
-import {
-  compareBareAmounts,
-  parseAsset,
-  parseBareAmount,
-  type AssetAmount,
-} from "../asset.js";
+import { compareBareAmounts, parseBareAmount, type AssetAmount } from "../asset.js";
 
 /** Resolved arguments of a table-row provider query. */
 export interface ProviderQuery {
   key: string;
-  provider: "xpr.rpc.tableRow";
+  /** The dialect's provider namespace (XPR: "xpr.rpc.tableRow"). */
+  provider: string;
   args: { contract: string; scope: string; table: string; key: string };
 }
 
@@ -46,6 +43,8 @@ export interface EvaluationContext {
   agentPermission: string;
   chainId: string;
   policyVersion: number;
+  /** The chain's policy dialect (#45) — path resolution, asset grammar, providers. */
+  dialect: PolicyDialect;
   /**
    * Resolved provider evidence (§8.4). The daemon resolves the queries listed
    * by collectProviderQueries() and passes them here. A rule whose provider has
@@ -92,25 +91,6 @@ function substitute(value: string, ctx: EvaluationContext): string {
       }
       return value;
   }
-}
-
-function resolvePath(action: DecodedAction, path: string): unknown {
-  if (path === "contract") return action.contract;
-  if (path === "action") return action.action;
-  if (path === "authorization.actor") return action.authorization[0]?.accountIdentifier;
-  if (path === "authorization.permission") return action.authorization[0]?.permission;
-  if (path.startsWith("data.")) {
-    let current: unknown = action.data;
-    for (const segment of path.slice(5).split(".")) {
-      if (typeof current !== "object" || current === null || Array.isArray(current)) {
-        return undefined;
-      }
-      current = (current as Record<string, unknown>)[segment];
-    }
-    return current;
-  }
-  // Unknown paths are rejected by the schema; reaching this is a logic error.
-  throw new AmbiguousValueError(`unresolvable match path: ${path}`);
 }
 
 /** Ordered comparison. Strings must be bare amounts of equal precision; safe integers are compared as integers. */
@@ -161,7 +141,7 @@ function predicateHolds(actual: unknown, expected: MatchValue, ctx: EvaluationCo
 /** The static part of a rule: its `match` field predicates only (no providers). */
 function staticMatch(action: DecodedAction, rule: PolicyRule, ctx: EvaluationContext): boolean {
   for (const [path, expected] of Object.entries(rule.match)) {
-    if (!predicateHolds(resolvePath(action, path), expected, ctx)) return false;
+    if (!predicateHolds(ctx.dialect.resolvePath(action, path), expected, ctx)) return false;
   }
   return true;
 }
@@ -175,7 +155,7 @@ function substituteArg(value: string, action: DecodedAction, ctx: EvaluationCont
   if (!value.startsWith("$")) return value;
   if (value === "$agent") return ctx.agent;
   if (value === "$agentPermission") return ctx.agentPermission;
-  const resolved = resolvePath(action, value.slice(1));
+  const resolved = ctx.dialect.resolvePath(action, value.slice(1));
   if (typeof resolved !== "string") {
     throw new AmbiguousValueError(`provider variable "${value}" did not resolve to a string`);
   }
@@ -262,30 +242,6 @@ function ruleMatches(action: DecodedAction, rule: PolicyRule, ctx: EvaluationCon
   return true;
 }
 
-/**
- * Extract the action's normalized asset (produced by the ChainAdapter
- * normalizer as data.quantity = { amount, symbol, precision }). A rule with
- * limits applied to an action without a comparable asset is an ambiguity.
- */
-function actionAsset(action: DecodedAction): AssetAmount {
-  const quantity = action.data["quantity"];
-  if (
-    typeof quantity === "object" &&
-    quantity !== null &&
-    typeof (quantity as Record<string, unknown>)["amount"] === "string" &&
-    typeof (quantity as Record<string, unknown>)["symbol"] === "string" &&
-    typeof (quantity as Record<string, unknown>)["precision"] === "number"
-  ) {
-    const q = quantity as { amount: string; symbol: string; precision: number };
-    const bare = parseBareAmount(q.amount);
-    if (bare.precision !== q.precision) {
-      throw new AmbiguousValueError("normalized quantity precision mismatch");
-    }
-    return { units: bare.units, symbol: q.symbol, precision: q.precision };
-  }
-  throw new AmbiguousValueError("rule has limits but the action carries no comparable asset");
-}
-
 function deny(code: DenyCode, safeReason: string, policyVersion?: number): Decision {
   return policyVersion === undefined
     ? { effect: "deny", code, safeReason }
@@ -354,10 +310,10 @@ export function evaluatePolicy(
 
       const limits = governing.limits;
       if (limits !== undefined) {
-        const asset = actionAsset(action);
+        const asset = ctx.dialect.assetOf(action);
 
         if (limits.maxPerTransaction !== undefined) {
-          const cap = parseAsset(limits.maxPerTransaction);
+          const cap = ctx.dialect.parseAssetLimit(limits.maxPerTransaction);
           // The cap is per symbol; an action of a different symbol under a
           // value cap would go uncapped — refuse rather than let it through.
           if (asset.symbol !== cap.symbol || asset.precision !== cap.precision) {
@@ -376,15 +332,15 @@ export function evaluatePolicy(
           limits.maxCountPerDay !== undefined ||
           limits.maxCountPerRecipientPerHour !== undefined;
         if (wantsWindow) {
-          const to = action.data["to"];
+          const recipient = ctx.dialect.recipientOf(action);
           const demand: QuotaDemand = { ruleId: governing.id, amount: asset };
-          if (typeof to === "string") demand.recipient = to;
-          if (limits.maxPerHour !== undefined) demand.maxPerHour = parseAsset(limits.maxPerHour);
-          if (limits.maxPerDay !== undefined) demand.maxPerDay = parseAsset(limits.maxPerDay);
+          if (recipient !== undefined) demand.recipient = recipient;
+          if (limits.maxPerHour !== undefined) demand.maxPerHour = ctx.dialect.parseAssetLimit(limits.maxPerHour);
+          if (limits.maxPerDay !== undefined) demand.maxPerDay = ctx.dialect.parseAssetLimit(limits.maxPerDay);
           if (limits.cooldownPerRecipientMs !== undefined) {
             demand.cooldownPerRecipientMs = limits.cooldownPerRecipientMs;
             if (demand.recipient === undefined) {
-              throw new AmbiguousValueError("cooldownPerRecipientMs requires a string data.to");
+              throw new AmbiguousValueError("cooldownPerRecipientMs requires a recipient on the action");
             }
           }
           if (limits.maxCountPerHour !== undefined) demand.maxCountPerHour = limits.maxCountPerHour;
@@ -392,7 +348,7 @@ export function evaluatePolicy(
           if (limits.maxCountPerRecipientPerHour !== undefined) {
             demand.maxCountPerRecipientPerHour = limits.maxCountPerRecipientPerHour;
             if (demand.recipient === undefined) {
-              throw new AmbiguousValueError("maxCountPerRecipientPerHour requires a string data.to");
+              throw new AmbiguousValueError("maxCountPerRecipientPerHour requires a recipient on the action");
             }
           }
           quotaDemands.push(demand);

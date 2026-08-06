@@ -130,13 +130,14 @@ export function buildMcpServer(config: SignBoxConfig, options: McpOptions): McpS
         if (computed !== row.policyhash || canonicalize(JSON.parse(row.policyjson)) !== row.policyjson) {
           return ok({ decision: { effect: "deny", code: "POLICY_UNAVAILABLE" } });
         }
-        const policy = validatePolicy(JSON.parse(row.policyjson));
+        const policy = validatePolicy(JSON.parse(row.policyjson), chainModule.dialect);
         const decoded = chainModule.decode(transaction, context);
         const { decision } = evaluatePolicy(decoded, policy, {
           agent,
           agentPermission: meta.permission,
           chainId: config.chainId,
           policyVersion: row.version,
+          dialect: chainModule.dialect,
         });
         return ok({ decision, note: "dry run — stateful quotas are enforced at sign time" });
       } catch (error) {

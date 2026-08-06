@@ -13,6 +13,7 @@ import type {
   SignedTransactionResult,
   TransactionSigner,
 } from "../src/core/types.js";
+import { xprDialect } from "../src/chains/xpr/dialect.js";
 
 const CHAIN_ID = "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd";
 const CHAIN: ChainContext = { chain: "XPR", network: "testnet", chainId: CHAIN_ID };
@@ -46,7 +47,7 @@ function policy() {
         match: { contract: "eosio.token", action: "transfer", "data.from": "$agent" },
       },
     ],
-  });
+  }, xprDialect);
 }
 
 function request(to = "alice"): string {
@@ -77,7 +78,7 @@ function makeDaemon(): { daemon: SignBoxDaemon; audit: AuditLog } {
   const audit = new AuditLog(join(mkdtempSync(join(tmpdir(), "signbox-audit-")), "state.db"));
   const daemon = new SignBoxDaemon(
     { socketPath: join(mkdtempSync(join(tmpdir(), "signbox-daemon-")), "s.sock") },
-    { decode: decodeXprTransaction, signer: new FakeSigner(), audit, now: () => NOW },
+    { dialect: xprDialect, decode: decodeXprTransaction, signer: new FakeSigner(), audit, now: () => NOW },
   );
   daemon.registerAgent({
     agent: "superagent",

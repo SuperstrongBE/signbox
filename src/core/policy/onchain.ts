@@ -15,6 +15,7 @@
 import { createHash } from "node:crypto";
 import { canonicalize } from "../canonical/jcs.js";
 import { validatePolicy, type Policy } from "./schema.js";
+import type { PolicyDialect } from "./dialect.js";
 
 export type PolicyIntegrityError =
   | "hash_mismatch"
@@ -31,7 +32,11 @@ export type PolicyIntegrityResult =
  * then validate the schema. Returns the parsed policy on success, or a
  * structured reason the caller maps to its own failure mode.
  */
-export function verifyStoredPolicy(policyjson: string, policyhash: string): PolicyIntegrityResult {
+export function verifyStoredPolicy(
+  policyjson: string,
+  policyhash: string,
+  dialect: PolicyDialect,
+): PolicyIntegrityResult {
   const computed = createHash("sha256").update(Buffer.from(policyjson, "utf8")).digest("hex");
   if (computed !== policyhash.toLowerCase()) return { ok: false, reason: "hash_mismatch" };
 
@@ -45,7 +50,7 @@ export function verifyStoredPolicy(policyjson: string, policyhash: string): Poli
 
   let policy: Policy;
   try {
-    policy = validatePolicy(parsed);
+    policy = validatePolicy(parsed, dialect);
   } catch {
     return { ok: false, reason: "schema_invalid" };
   }

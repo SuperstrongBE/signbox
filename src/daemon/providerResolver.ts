@@ -10,6 +10,7 @@
  */
 
 import type { ChainReadRelay } from "./chainRelay.js";
+import type { PolicyDialect } from "../core/policy/dialect.js";
 import type { ProviderEvidence, ProviderEvidenceMap, ProviderQuery } from "../core/policy/engine.js";
 
 const DEFAULT_TIMEOUT_MS = 3000;
@@ -17,12 +18,13 @@ const DEFAULT_TIMEOUT_MS = 3000;
 export async function resolveProviders(
   queries: ProviderQuery[],
   relay: ChainReadRelay | undefined,
+  dialect: PolicyDialect,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<ProviderEvidenceMap> {
   const evidence: ProviderEvidenceMap = {};
   await Promise.all(
     queries.map(async (query) => {
-      evidence[query.key] = await resolveOne(query, relay, timeoutMs);
+      evidence[query.key] = await resolveOne(query, relay, dialect, timeoutMs);
     }),
   );
   return evidence;
@@ -31,27 +33,14 @@ export async function resolveProviders(
 async function resolveOne(
   query: ProviderQuery,
   relay: ChainReadRelay | undefined,
+  dialect: PolicyDialect,
   timeoutMs: number,
 ): Promise<ProviderEvidence> {
   if (relay === undefined) return { ok: false };
   try {
-    // V1 provider: xpr.rpc.tableRow → a single row bounded on the primary key.
-    const params = {
-      code: query.args.contract,
-      scope: query.args.scope,
-      table: query.args.table,
-      lower_bound: query.args.key,
-      upper_bound: query.args.key,
-      limit: 1,
-      json: true,
-    };
-    const result = await withTimeout(relay.call("get_table_rows", params), timeoutMs);
-    const rows = (result as { rows?: unknown }).rows;
-    if (!Array.isArray(rows)) return { ok: false };
-    const row = rows[0];
-    if (row === undefined) return { ok: true, found: false, row: null };
-    if (row === null || typeof row !== "object" || Array.isArray(row)) return { ok: false };
-    return { ok: true, found: true, row: row as Record<string, unknown> };
+    // The QUERY→read-call mapping is the dialect's (#45); the timeout and the
+    // fail-closed catch are generic and stay here.
+    return await withTimeout(dialect.resolveProviderQuery(query, relay), timeoutMs);
   } catch {
     return { ok: false };
   }

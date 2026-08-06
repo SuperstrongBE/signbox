@@ -8,6 +8,7 @@ import { emptyPolicy } from "../src/core/policy/schema.js";
 import type { ChainReadRelay } from "../src/daemon/chainRelay.js";
 import type { ChainContext, KeyHandle } from "../src/core/types.js";
 import type { ReadResponseJson } from "../src/daemon/protocol.js";
+import { xprDialect } from "../src/chains/xpr/dialect.js";
 
 const CHAIN_ID = "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd";
 const CHAIN: ChainContext = { chain: "XPR", network: "testnet", chainId: CHAIN_ID };
@@ -65,7 +66,7 @@ describe("daemon read ops — whoami / query", () => {
     };
     daemon = new SignBoxDaemon(
       { socketPath: join(mkdtempSync(join(tmpdir(), "signbox-read-")), "signbox.sock") },
-      { decode: decodeXprTransaction, signer: { sign: async () => ({ signature: "", transactionDigest: "" }) }, relay, now: () => NOW },
+      { dialect: xprDialect, decode: decodeXprTransaction, signer: { sign: async () => ({ signature: "", transactionDigest: "" }) }, relay, now: () => NOW },
     );
     daemon.registerAgent(runtime);
   });
@@ -117,7 +118,7 @@ describe("daemon read ops — whoami / query", () => {
   it("query without a relay configured fails closed", async () => {
     const noRelay = new SignBoxDaemon(
       { socketPath: join(mkdtempSync(join(tmpdir(), "signbox-norelay-")), "signbox.sock") },
-      { decode: decodeXprTransaction, signer: { sign: async () => ({ signature: "", transactionDigest: "" }) }, now: () => NOW },
+      { dialect: xprDialect, decode: decodeXprTransaction, signer: { sign: async () => ({ signature: "", transactionDigest: "" }) }, now: () => NOW },
     );
     noRelay.registerAgent({
       agent: "funagent", permission: "active", chain: CHAIN, policy: emptyPolicy("XPR", CHAIN_ID),

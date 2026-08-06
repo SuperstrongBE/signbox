@@ -227,6 +227,7 @@ tx.command("explain")
           options.network !== undefined ? { network: options.network } : {},
         );
         const context = chainContextOf(config);
+        const dialect = getChain(config.chain).dialect;
 
         // Resolve the policy to evaluate. Default: the on-chain policy is the
         // source of truth (INV-004). Override: a local --policy file lets an
@@ -238,7 +239,7 @@ tx.command("explain")
         let source: string;
         let meta: Record<string, unknown> = {};
         if (options.policy !== undefined) {
-          policy = validatePolicy(readJsonFile(options.policy));
+          policy = validatePolicy(readJsonFile(options.policy), dialect);
           agentPermission = options.permission ?? "active";
           policyVersion = Number(options.policyVersion ?? "1");
           source = "local-file";
@@ -257,7 +258,7 @@ tx.command("explain")
           }
           // Same integrity gate the daemon cache applies (§8.6): hash +
           // canonical JCS + schema. A tampered row is refused, never dry-run.
-          const verified = verifyStoredPolicy(raw.policyjson, raw.policyhash);
+          const verified = verifyStoredPolicy(raw.policyjson, raw.policyhash, dialect);
           if (!verified.ok) {
             fail(`on-chain policy failed integrity check: ${verified.reason}`);
           }
@@ -274,6 +275,7 @@ tx.command("explain")
           agentPermission,
           chainId: context.chainId,
           policyVersion,
+          dialect,
         };
         // Resolve any providers (§8.4) the same way the daemon does, so the
         // dry-run matches: read them through the same read-only relay.
@@ -286,6 +288,7 @@ tx.command("explain")
                   endpoints: config.endpoints,
                   chainId: config.chainId,
                 }),
+                dialect,
               )
             : undefined;
         const result = evaluatePolicy(

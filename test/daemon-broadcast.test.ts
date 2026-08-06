@@ -14,6 +14,7 @@ import type {
   SignedTransactionResult,
   TransactionSigner,
 } from "../src/core/types.js";
+import { xprDialect } from "../src/chains/xpr/dialect.js";
 
 const CHAIN_ID = "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd";
 const CHAIN: ChainContext = { chain: "XPR", network: "testnet", chainId: CHAIN_ID };
@@ -50,7 +51,7 @@ function statefulPolicy() {
         limits: { maxPerTransaction: "1000.0000 XPR", maxPerHour: "2500.0000 XPR" },
       },
     ],
-  });
+  }, xprDialect);
 }
 
 class FakeSigner implements TransactionSigner {
@@ -111,7 +112,7 @@ function build(outcome: BroadcastOutcome): {
   const broadcaster = new FakeBroadcaster(outcome);
   const daemon = new SignBoxDaemon(
     { socketPath: join(dir, "signbox.sock") },
-    { decode: decodeXprTransaction, signer: new FakeSigner(), broadcaster, quotas, now: () => NOW },
+    { dialect: xprDialect, decode: decodeXprTransaction, signer: new FakeSigner(), broadcaster, quotas, now: () => NOW },
   );
   const runtime: AgentRuntime = {
     agent: "superagent",

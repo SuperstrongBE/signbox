@@ -10,10 +10,11 @@ import { decodeXprTransaction } from "../src/chains/xpr/decode.js";
 import { resolveProviders } from "../src/daemon/providerResolver.js";
 import type { ChainReadRelay } from "../src/daemon/chainRelay.js";
 import type { ChainContext, DecodedTransaction } from "../src/core/types.js";
+import { xprDialect } from "../src/chains/xpr/dialect.js";
 
 const CHAIN_ID = "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd";
 const CHAIN: ChainContext = { chain: "XPR", network: "testnet", chainId: CHAIN_ID };
-const CTX: EvaluationContext = { agent: "funagent", agentPermission: "active", chainId: CHAIN_ID, policyVersion: 1 };
+const CTX: EvaluationContext = { agent: "funagent", agentPermission: "active", chainId: CHAIN_ID, policyVersion: 1, dialect: xprDialect };
 
 /** Allow a transfer only if the recipient is in an on-chain whitelist row. */
 const WHITELIST_POLICY: Policy = validatePolicy({
@@ -36,7 +37,7 @@ const WHITELIST_POLICY: Policy = validatePolicy({
       ],
     },
   ],
-});
+}, xprDialect);
 
 function transfer(to: string): DecodedTransaction {
   return decodeXprTransaction(
@@ -128,7 +129,7 @@ describe("policy providers — xpr.rpc.tableRow (§8.4)", () => {
           ],
         },
       ],
-    });
+    }, xprDialect);
     const tx = transfer("alice");
     const queries = collectProviderQueries(tx, policy, CTX);
     const goldEvidence = { [queries[0]!.key]: { ok: true, found: true, row: { tier: "gold" } } } as ProviderEvidenceMap;
@@ -143,13 +144,13 @@ describe("provider resolver — normalization + fail closed", () => {
 
   it("normalizes a found row", async () => {
     const relay: ChainReadRelay = { call: async () => ({ rows: [{ allowed: ["alice"] }], more: false }) };
-    const evidence = await resolveProviders([query], relay);
+    const evidence = await resolveProviders([query], relay, xprDialect);
     expect(evidence[query.key]).toMatchObject({ ok: true, found: true, row: { allowed: ["alice"] } });
   });
 
   it("normalizes an empty result to a deterministic not-found", async () => {
     const relay: ChainReadRelay = { call: async () => ({ rows: [], more: false }) };
-    const evidence = await resolveProviders([query], relay);
+    const evidence = await resolveProviders([query], relay, xprDialect);
     expect(evidence[query.key]).toMatchObject({ ok: true, found: false, row: null });
   });
 
@@ -159,12 +160,12 @@ describe("provider resolver — normalization + fail closed", () => {
         throw new Error("unreachable");
       },
     };
-    const evidence = await resolveProviders([query], relay);
+    const evidence = await resolveProviders([query], relay, xprDialect);
     expect(evidence[query.key]).toEqual({ ok: false });
   });
 
   it("fails closed when no relay is available", async () => {
-    const evidence = await resolveProviders([query], undefined);
+    const evidence = await resolveProviders([query], undefined, xprDialect);
     expect(evidence[query.key]).toEqual({ ok: false });
   });
 });

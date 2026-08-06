@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { xprDialect } from "../src/chains/xpr/dialect.js";
 import { evaluatePolicy, type EvaluationContext } from "../src/core/policy/engine.js";
 import { emptyPolicy, validatePolicy, type Policy } from "../src/core/policy/schema.js";
 import { decodeXprTransaction } from "../src/chains/xpr/decode.js";
@@ -7,6 +8,7 @@ import type { ChainContext, DecodedTransaction } from "../src/core/types.js";
 const CHAIN_ID = "71ee83bcf52142d61019d95f9cc5427ba6a0d7ff8accd9e2088ae2abeaf3d3dd";
 const CHAIN: ChainContext = { chain: "XPR", network: "mainnet", chainId: CHAIN_ID };
 const CTX: EvaluationContext = {
+  dialect: xprDialect,
   agent: "superagent",
   agentPermission: "xp2vr3",
   chainId: CHAIN_ID,
@@ -49,7 +51,7 @@ const SPEC_POLICY: Policy = validatePolicy({
       },
     },
   ],
-});
+}, xprDialect);
 
 function transfer(overrides?: {
   to?: string;
@@ -270,7 +272,7 @@ describe("policy engine — multi-action hardening", () => {
           limits: { maxPerTransaction: "1000.0000 XPR" },
         },
       ],
-    });
+    }, xprDialect);
     const { decision } = evaluatePolicy(multiTransfer(16, "1000.0000 XPR"), policy, CTX);
     expect(decision).toMatchObject({ effect: "deny", code: "LIMIT_EXCEEDED" });
   });
@@ -289,7 +291,7 @@ describe("policy engine — multi-action hardening", () => {
           limits: { maxPerTransaction: "100.0000 XPR" },
         },
       ],
-    });
+    }, xprDialect);
     // 2 x 40 = 80 <= 100: allowed.
     expect(evaluatePolicy(multiTransfer(2, "40.0000 XPR"), policy, CTX).decision.effect).toBe("allow");
     // 3 x 40 = 120 > 100: refused.
@@ -312,7 +314,7 @@ describe("policy engine — multi-action hardening", () => {
           match: { contract: "eosio.token", action: "transfer", "data.from": "$agent" },
         },
       ],
-    });
+    }, xprDialect);
     expect(evaluatePolicy(multiTransfer(3, "1.0000 XPR"), policy, CTX).decision.effect).toBe("allow");
   });
 
@@ -330,7 +332,7 @@ describe("policy engine — multi-action hardening", () => {
           limits: { maxCountPerRecipientPerHour: 3 },
         },
       ],
-    });
+    }, xprDialect);
     const { quotaDemands } = evaluatePolicy(multiTransfer(3, "1.0000 XPR"), policy, CTX);
     expect(quotaDemands).toHaveLength(3);
     expect(quotaDemands.every((d) => d.maxCountPerRecipientPerHour === 3 && d.recipient === "alice")).toBe(
@@ -341,11 +343,11 @@ describe("policy engine — multi-action hardening", () => {
 
 describe("policy schema validation (§7.5 — the daemon is the sole validator)", () => {
   it("rejects unknown top-level fields", () => {
-    expect(() => validatePolicy({ ...SPEC_POLICY, extra: true })).toThrow();
+    expect(() => validatePolicy({ ...SPEC_POLICY, extra: true }, xprDialect)).toThrow();
   });
 
   it("rejects default allow", () => {
-    expect(() => validatePolicy({ ...SPEC_POLICY, default: "allow" })).toThrow();
+    expect(() => validatePolicy({ ...SPEC_POLICY, default: "allow" }, xprDialect)).toThrow();
   });
 
   it("rejects unknown match paths", () => {
@@ -353,7 +355,7 @@ describe("policy schema validation (§7.5 — the daemon is the sole validator)"
       validatePolicy({
         ...SPEC_POLICY,
         rules: [{ id: "x", effect: "allow", match: { "shell.exec": "rm" } }],
-      }),
+      }, xprDialect),
     ).toThrow();
   });
 
@@ -365,7 +367,7 @@ describe("policy schema validation (§7.5 — the daemon is the sole validator)"
           { id: "dup", effect: "allow", match: { contract: "a" } },
           { id: "dup", effect: "deny", match: { contract: "b" } },
         ],
-      }),
+      }, xprDialect),
     ).toThrow();
   });
 
@@ -381,7 +383,7 @@ describe("policy schema validation (§7.5 — the daemon is the sole validator)"
             limits: { maxPerTransaction: "1.0000 XPR" },
           },
         ],
-      }),
+      }, xprDialect),
     ).toThrow();
   });
 
@@ -397,7 +399,7 @@ describe("policy schema validation (§7.5 — the daemon is the sole validator)"
             limits: { maxPerTransaction: "1.0 lol" },
           },
         ],
-      }),
+      }, xprDialect),
     ).toThrow();
   });
 });
