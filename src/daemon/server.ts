@@ -50,6 +50,8 @@ import type { ChainReadRelay } from "./chainRelay.js";
 import { NonceCache } from "./nonceCache.js";
 import type { QuotaJournal } from "./quotaJournal.js";
 import type { PolicyCache } from "./policyCache.js";
+import type { AuthorityCache } from "./authorityCache.js";
+import { checkLocalIdentity } from "./identity.js";
 import type { AuditLog, AuditEntryInput } from "./auditLog.js";
 
 /** Mutable context populated during a decision, then written to the audit log. */
@@ -134,6 +136,13 @@ export interface DaemonDependencies {
   policyCache?: PolicyCache;
   /** Hash-chained audit log (§16). Every decision is recorded when present. */
   audit?: AuditLog;
+  /**
+   * On-chain key-authority cache (#39). When present, every action is gated on
+   * the daemon key still being authorized by the account's on-chain
+   * (agent, permission) authority — fail closed. Absent in unit tests and
+   * offline dev; the local identity checks (actor/permission) always run.
+   */
+  authority?: AuthorityCache;
   /** Injectable clock for tests. */
   now?: () => number;
 }
@@ -528,6 +537,10 @@ export class SignBoxDaemon {
       // statically registered policy is used.
       let activePolicy = runtime.policy;
       let activeVersion = runtime.policyVersion;
+      // The authoritative on-chain permission (agentperm) — from the cache when
+      // present (it reflects a setperm rotation), else the statically-registered
+      // one (offline/tests). This is what the identity gate binds against (#39).
+      let onChainPermission = runtime.permission;
       if (this.deps.policyCache !== undefined) {
         const cached = await this.deps.policyCache.get(runtime.agent, now);
         if ("unavailable" in cached) {
@@ -540,6 +553,7 @@ export class SignBoxDaemon {
         }
         activePolicy = cached.policy;
         activeVersion = cached.version;
+        onChainPermission = cached.permission;
       }
 
       // Decode: INV-014/INV-003 enforcement lives in the ChainAdapter.
@@ -551,6 +565,25 @@ export class SignBoxDaemon {
       }
       // Contract::action names only — never the data values (§16).
       auditCtx.contracts = decoded.actions.map((a) => `${a.contract}::${a.action}`);
+
+      // IDENTITY BINDING (#39) — before evaluation, quota, or signing.
+      // Non-configurable: a permissive/malformed policy cannot make the daemon
+      // sign for an unexpected actor/permission (confused deputy). One stable
+      // code, no oracle for which check failed.
+      const identity = { agent: runtime.agent, onChainPermission, key: runtime.key };
+      if (!checkLocalIdentity(decoded, identity)) {
+        return deny("AUTHORIZATION_MISMATCH", "transaction identity does not match the bound agent");
+      }
+      if (this.deps.authority !== undefined) {
+        const bound = await this.deps.authority.check(
+          runtime.agent,
+          onChainPermission,
+          runtime.key.publicKey,
+        );
+        if (!bound.authorized) {
+          return deny("AUTHORIZATION_MISMATCH", "the daemon key is not authorized on-chain");
+        }
+      }
 
       // Resolve any deterministic async providers (§8.4) BEFORE evaluation, so
       // the engine stays pure: list the queries, read them through the relay

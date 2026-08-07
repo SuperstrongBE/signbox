@@ -18,6 +18,7 @@ import { XprChainReadRelay } from "./relay.js";
 import { XprPolicyReader } from "./policyReader.js";
 import { XprOnboardingBackend } from "./onboarding.js";
 import { xprDialect } from "./dialect.js";
+import { resolveXprKeyAuthority } from "./authority.js";
 import type { ChainModule, ChainWiring } from "../registry.js";
 import type { KeystoreBackend } from "../../keystore/backend.js";
 
@@ -98,4 +99,6 @@ export const xprModule: ChainModule = {
     const rpc = verifiedRpc(new JsonRpc(wiring.endpoints), { chainId: wiring.chainId });
     await rpc.get_abi(registryLocator); // verified-before-use, then throws when not deployed
   },
+
+  resolveKeyAuthority: resolveXprKeyAuthority,
 };

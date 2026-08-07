@@ -30,6 +30,10 @@ export interface CachedPolicy {
   version: number;
   /** On-chain enabled flag (distinct from the local kill-switch). */
   enabled: boolean;
+  /** The account that controls the agent's policy (on-chain authority). */
+  authority: string;
+  /** The on-chain agent permission (§7.1 `agentperm`) — authoritative after a setperm (#39). */
+  permission: string;
   isFinancial: boolean;
   verifiedAtMs: number;
 }
@@ -69,6 +73,8 @@ type RefreshResult =
 
 interface CacheRow {
   agent: string;
+  authority: string;
+  permission: string;
   version: number;
   policyjson: string;
   enabled: number;
@@ -176,7 +182,15 @@ export class PolicyCache {
         highest_seen: raw.version,
       });
 
-    this.memory.set(agent, { policy, version: raw.version, enabled: raw.enabled, isFinancial, verifiedAtMs });
+    this.memory.set(agent, {
+      policy,
+      version: raw.version,
+      enabled: raw.enabled,
+      authority: raw.authority,
+      permission: raw.agentperm,
+      isFinancial,
+      verifiedAtMs,
+    });
     return { ok: true };
   }
 
@@ -184,7 +198,7 @@ export class PolicyCache {
   private hydrate(agent: string): CachedPolicy | undefined {
     const row = this.db
       .prepare(
-        `SELECT agent, version, policyjson, enabled, is_financial, verified_at_ms, highest_seen_version
+        `SELECT agent, authority, permission, version, policyjson, enabled, is_financial, verified_at_ms, highest_seen_version
          FROM policy_cache WHERE agent = ?`,
       )
       .get(agent) as CacheRow | undefined;
@@ -199,6 +213,8 @@ export class PolicyCache {
       policy,
       version: row.version,
       enabled: row.enabled === 1,
+      authority: row.authority,
+      permission: row.permission,
       isFinancial: row.is_financial === 1,
       verifiedAtMs: row.verified_at_ms,
     };

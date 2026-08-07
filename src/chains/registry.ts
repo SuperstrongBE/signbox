@@ -106,6 +106,29 @@ export interface ChainModule {
 
   /** Diagnostics (doctor): verify the policy registry is deployed. Throws if not. */
   checkPolicyRegistry(wiring: ChainWiring, registryLocator: string): Promise<void>;
+
+  /**
+   * Identity binding (#39, INV): does the on-chain authority of
+   * (account, permission) authorize EXACTLY `expectedPublicKey` — the daemon's
+   * signing key? For the MVP this requires a dedicated threshold-1 permission
+   * with that single key and no delegated accounts or waits; anything more
+   * complex is refused (`authorized: false`) rather than partially resolved.
+   * Chain-id pinned (INV-009); throws only on a network/parse failure, which
+   * the caller treats as unauthorized (fail closed).
+   */
+  resolveKeyAuthority(
+    wiring: ChainWiring,
+    account: string,
+    permission: string,
+    expectedPublicKey: string,
+  ): Promise<KeyAuthorityResult>;
+}
+
+/** Result of an on-chain key-authority resolution (#39). */
+export interface KeyAuthorityResult {
+  authorized: boolean;
+  /** A stable, non-sensitive reason when not authorized (for audit/logs). */
+  reason?: string;
 }
 
 const modules = new Map<string, ChainModule>();

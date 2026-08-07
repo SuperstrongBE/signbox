@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { SignBoxDaemon } from "../daemon/server.js";
 import { QuotaJournal } from "../daemon/quotaJournal.js";
 import { PolicyCache } from "../daemon/policyCache.js";
+import { AuthorityCache, type AuthorityResolver } from "../daemon/authorityCache.js";
 import { AuditLog } from "../daemon/auditLog.js";
 import type { TransactionBroadcaster } from "../daemon/broadcaster.js";
 import type { ChainReadRelay } from "../daemon/chainRelay.js";
@@ -35,12 +36,14 @@ export interface RunningDaemon {
   shutdown: () => Promise<void>;
 }
 
-/** Test seams: inject a fake chain reader / signer / broadcaster / clock. */
+/** Test seams: inject a fake chain reader / signer / broadcaster / authority / clock. */
 export interface DaemonRunnerOverrides {
   policyReader?: PolicyReader;
   signer?: TransactionSigner;
   broadcaster?: TransactionBroadcaster;
   relay?: ChainReadRelay;
+  /** Fake the on-chain key-authority resolution (#39) — offline tests. */
+  resolveKeyAuthority?: AuthorityResolver;
   now?: () => number;
 }
 
@@ -75,13 +78,25 @@ export async function startDaemonFromConfig(
   const policyCache = new PolicyCache(config.stateDbPath, policyReader, chainModule.dialect, {}, overrides.now);
   const audit = new AuditLog(config.stateDbPath);
 
+  // On-chain key-authority binding (#39): every action is gated on the daemon
+  // key still being authorized by the account's on-chain permission, cached
+  // with bounded freshness (rotation detection), fail closed.
+  const resolveAuthority: AuthorityResolver =
+    overrides.resolveKeyAuthority ??
+    ((account, permission, expectedPublicKey) =>
+      chainModule.resolveKeyAuthority(wiring, account, permission, expectedPublicKey));
+  const authority = new AuthorityCache(
+    resolveAuthority,
+    overrides.now !== undefined ? { now: overrides.now } : {},
+  );
+
   const decode = chainModule.decode.bind(chainModule);
   const dialect = chainModule.dialect;
   const daemon = new SignBoxDaemon(
     { socketPath: config.socketPath, adminSocketPath: config.adminSocketPath },
     overrides.now === undefined
-      ? { decode, dialect, signer, broadcaster, relay, quotas, policyCache, audit }
-      : { decode, dialect, signer, broadcaster, relay, quotas, policyCache, audit, now: overrides.now },
+      ? { decode, dialect, signer, broadcaster, relay, quotas, policyCache, audit, authority }
+      : { decode, dialect, signer, broadcaster, relay, quotas, policyCache, audit, authority, now: overrides.now },
   );
 
   const wipeAll = (): void => keystore.wipe();
@@ -99,6 +114,15 @@ export async function startDaemonFromConfig(
       if (meta.chain.chainId !== context.chainId) {
         throw new ValidationError(
           `keystore for agent "${meta.agent}" is bound to another chain (INV-013)`,
+        );
+      }
+
+      // Startup identity gate (#39): the unlocked private key MUST derive the
+      // public key its own metadata declares — a tampered/mismatched keystore
+      // never starts the daemon (verified in-backend, no key export).
+      if (!(await keystore.verifyKeyBinding(meta.agent))) {
+        throw new ValidationError(
+          `keystore for agent "${meta.agent}" fails its key binding (private key ≠ declared public key)`,
         );
       }
 
