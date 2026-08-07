@@ -156,6 +156,17 @@ export class XprTransactionSigner implements TransactionSigner {
       throw new SigningError("key chain does not match the signer configuration");
     }
     const source = tx.source as XprSourceTransaction;
+
+    // Identity binding, defense in depth (#39): the daemon already gated
+    // actor/permission before evaluation, but the signer NEVER signs an action
+    // whose authorization is not exactly the bound (agent, permission) — a
+    // second, independent barrier against a confused-deputy signature.
+    for (const action of source.actions) {
+      const auth = action.authorization;
+      if (auth.length !== 1 || auth[0]?.actor !== key.agent || auth[0]?.permission !== key.permission) {
+        throw new SigningError("action authorization does not match the signing key identity");
+      }
+    }
     const api = this.apiFor(key);
 
     // Serialize + sign, never broadcast (INV-011: push is a separate step).

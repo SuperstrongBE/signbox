@@ -30,6 +30,29 @@ Complementary, pre-existing guards: the relay's strict read-method allow-list
 (`verifyStoredPolicy`), the anti-rollback version watermark, and the policy
 cache freshness bounds (financial 10 s / non-financial 30 s).
 
+## Key-authority binding (#39)
+
+Before evaluating, reserving quota, or signing, the daemon binds the signing
+identity (`src/daemon/identity.ts` + `authorityCache.ts`):
+
+- **Local, per request:** every action must carry exactly one authorization
+  whose actor equals the agent and whose permission equals the **current
+  on-chain** agent permission (`agentperm`, from the policy cache). A mismatch
+  returns `AUTHORIZATION_MISMATCH` — one stable code, no oracle.
+- **On-chain, cached:** the daemon's public key must be authorized by the
+  account's `(agent, permission)` authority — a **threshold-1, single-key**
+  permission with no delegated accounts or waits (`resolveKeyAuthority`).
+  Anything more complex is refused, never approximated.
+- **Startup, local:** the unlocked private key must derive the public key its
+  keystore metadata declares (`verifyKeyBinding`, in-backend, no export), or
+  the daemon refuses to start.
+
+**Rotation bound.** The on-chain authorization is cached for **30 s** (positive
+TTL); a key/permission rotation on-chain is refused within that window on the
+next re-resolve. A lookup failure is cached for **5 s** (negative TTL) and
+always reads as *not authorized* (fail closed). The signer repeats the
+actor/permission check as defense in depth.
+
 ## Residual risks and bounds
 
 - **Failover inside a window.** `@proton/js`'s JsonRpc may fail over between

@@ -163,6 +163,8 @@ describe("daemon assembled from keystores (zero-config integration)", () => {
     running = await startDaemonFromConfig(config, async () => Buffer.from(PASSPHRASE), {
       signer: new FakeSigner(),
       policyReader: new FakeReader("superagent"),
+      // Offline: the on-chain authority is simulated as binding the daemon key.
+      resolveKeyAuthority: async () => ({ authorized: true }),
     });
   });
 
