@@ -24,4 +24,8 @@ regexes = [
   '''PVT_K1_secret''',
   # The unit tests' fake daemon auth token — an obviously sequential placeholder.
   '''tok_0123456789abcdefghij''',
+  # PUBLIC keys (Antelope PUB_K1_… / legacy EOS…) — public by definition, never
+  # a secret. Private keys use the PVT_/WIF forms, which are NOT matched here.
+  '''\bPUB_K1_[1-9A-HJ-NP-Za-km-z]{40,}''',
+  '''\bEOS[1-9A-HJ-NP-Za-km-z]{50}\b''',
 ]
