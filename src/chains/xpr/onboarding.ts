@@ -213,15 +213,32 @@ export class XprOnboardingBackend implements OnboardingBackend {
     } catch {
       return { ok: false, reason: "cannot read agent account" };
     }
-    const perm = (account.permissions ?? []).find(
-      (p) => (p as { perm_name?: string }).perm_name === args.input.permission,
-    ) as { required_auth?: { keys?: { key?: string }[] } } | undefined;
+    type Perm = { perm_name?: string; required_auth?: { keys?: { key?: string }[] } };
+    const perms = (account.permissions ?? []) as Perm[];
+    const perm = perms.find((p) => p.perm_name === args.input.permission);
     if (perm === undefined) {
       return { ok: false, reason: `permission "${args.input.permission}" not found` };
     }
     const keys = perm.required_auth?.keys ?? [];
     if (!keys.some((k) => normalizeKey(k.key) === normalizeKey(args.agentPublicKey))) {
       return { ok: false, reason: "agent permission does not hold the agent key" };
+    }
+
+    // Defense in depth (#41): the agent account's OWNER must be controlled by
+    // the AUTHORITY's key, not an attacker's. A forged onboarding payload that
+    // set owner to another key is an account-takeover vector the active-key
+    // check above does NOT catch — verify it independently against the
+    // authority's own on-chain key.
+    let authorityKey: string;
+    try {
+      authorityKey = await this.resolveActiveKey(args.input.authority);
+    } catch {
+      return { ok: false, reason: "cannot resolve the authority key" };
+    }
+    const owner = perms.find((p) => p.perm_name === "owner");
+    const ownerKeys = owner?.required_auth?.keys ?? [];
+    if (!ownerKeys.some((k) => normalizeKey(k.key) === normalizeKey(authorityKey))) {
+      return { ok: false, reason: "agent owner is not controlled by the authority" };
     }
 
     // The policy row must exist with the expected authority, permission and
