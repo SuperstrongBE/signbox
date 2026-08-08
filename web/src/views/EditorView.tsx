@@ -19,7 +19,7 @@ import { Inspector } from "../editor/Inspector";
 import { PushModal } from "../editor/PushModal";
 import { evaluateGraph } from "../editor/eval";
 import { compilePolicy, canonicalize, type CompileResult } from "../editor/compile";
-import { decompilePolicy } from "../editor/decompile";
+import { loadPolicyForEditing } from "../editor/roundtrip";
 import { SAMPLES } from "../editor/samples";
 import { loadTestTxs, saveTestTx, deleteTestTx, txToSampleActions, TEST_CHAIN } from "../editor/testTx";
 import { buildScaffold } from "../editor/scaffold";
@@ -155,7 +155,6 @@ function Palette({ onReplayTour }: { onReplayTour: () => void }) {
 interface LoadedPolicy {
   agent: string;
   version: number;
-  warnings: string[];
 }
 
 function EditorInner({
@@ -339,11 +338,6 @@ function EditorInner({
           </select>{" "}
           · v{loaded.version} on {network}
           {dirty && <span className="ebdirty" title="Unsaved policy changes">● unsaved</span>}
-          {loaded.warnings.length > 0 && (
-            <span className="ebwarn" title={loaded.warnings.join("\n")}>
-              ⚠ {loaded.warnings.length} construct{loaded.warnings.length > 1 ? "s" : ""} not shown
-            </span>
-          )}
         </div>
         <Palette onReplayTour={() => setTourOpen(true)} />
         <GraphCanvas evaluation={evaluation} />
@@ -411,6 +405,8 @@ function ConfirmLeave({ onQuit, onCancel }: { onQuit: () => void; onCancel: () =
 type LoadState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
+  | { kind: "invalid"; message: string; original: string }
+  | { kind: "readonly"; version: number; original: string; reasons: string[] }
   | { kind: "ready"; initial: GraphState; loaded: LoadedPolicy };
 
 export function EditorView({
@@ -422,7 +418,7 @@ export function EditorView({
   onBack: () => void;
   onSwitch: (agent: string) => void;
 }) {
-  const { network, endpoints } = useNetwork();
+  const { network, endpoints, chainId } = useNetwork();
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
 
   useEffect(() => {
@@ -436,8 +432,17 @@ export function EditorView({
           setLoad({ kind: "error", message: `no policy row for "${agent}" on ${network}` });
           return;
         }
-        const { state, warnings } = decompilePolicy(row.policyjson);
-        setLoad({ kind: "ready", initial: state, loaded: { agent, version: row.version, warnings } });
+        // Only a policy that survives a lossless round trip is editable (#38):
+        // otherwise the graph doesn't capture the whole document and saving it
+        // could silently drop or rewrite part of the on-chain policy.
+        const result = loadPolicyForEditing(row.policyjson, chainId);
+        if (result.mode === "editable") {
+          setLoad({ kind: "ready", initial: result.state, loaded: { agent, version: row.version } });
+        } else if (result.mode === "readonly") {
+          setLoad({ kind: "readonly", version: row.version, original: result.original, reasons: result.reasons });
+        } else {
+          setLoad({ kind: "invalid", message: result.reason, original: result.original });
+        }
       } catch (error) {
         if (!alive) return;
         setLoad({ kind: "error", message: error instanceof Error ? error.message : String(error) });
@@ -446,7 +451,7 @@ export function EditorView({
     return () => {
       alive = false;
     };
-  }, [agent, endpoints, network]);
+  }, [agent, endpoints, network, chainId]);
 
   if (load.kind === "loading") {
     return (
@@ -468,9 +473,87 @@ export function EditorView({
       </div>
     );
   }
+  if (load.kind === "invalid") {
+    return (
+      <ReadOnlyPolicy
+        agent={agent}
+        heading="This policy can’t be opened in the editor"
+        lead={`It could not be read: ${load.message}. The on-chain document is shown below, unchanged.`}
+        tone="error"
+        original={load.original}
+        onBack={onBack}
+      />
+    );
+  }
+  if (load.kind === "readonly") {
+    return (
+      <ReadOnlyPolicy
+        agent={agent}
+        version={load.version}
+        network={network}
+        heading="Read-only — this policy can’t be safely edited here"
+        lead="The visual editor can’t fully represent this policy, so it won’t let you save it from the graph (that could silently drop or change part of it). Edit it with the CLI, or push a fresh policy from the editor. The exact on-chain document is shown below."
+        reasons={load.reasons}
+        original={load.original}
+        onBack={onBack}
+      />
+    );
+  }
   return (
     <GraphProvider initial={load.initial}>
       <EditorInner loaded={load.loaded} onBack={onBack} onSwitch={onSwitch} />
     </GraphProvider>
+  );
+}
+
+/**
+ * Read-only / invalid policy screen (#38). Shows the ORIGINAL on-chain document
+ * verbatim and never offers a graph or a push, so a policy the editor can’t
+ * fully represent can never be silently overwritten.
+ */
+function ReadOnlyPolicy({
+  agent,
+  version,
+  network,
+  heading,
+  lead,
+  reasons,
+  original,
+  tone,
+  onBack,
+}: {
+  agent: string;
+  version?: number;
+  network?: string;
+  heading: string;
+  lead: string;
+  reasons?: string[];
+  original: string;
+  tone?: "error";
+  onBack: () => void;
+}) {
+  return (
+    <div className="editor">
+      <div className="editbanner">
+        <button className="backbtn" onClick={onBack}>← Agents</button>
+        <span className="ebsep" />
+        <b className="mono">{agent}</b>
+        {version !== undefined && network !== undefined && <>{" "}· v{version} on {network}</>}
+        <span className={tone === "error" ? "ebreadonly err" : "ebreadonly"}>🔒 read-only</span>
+      </div>
+      <div className="rocard">
+        <h3>{heading}</h3>
+        <p className="rolead">{lead}</p>
+        {reasons !== undefined && reasons.length > 0 && (
+          <ul className="roreasons">
+            {reasons.map((r, i) => (
+              <li key={i}>⚠ {r}</li>
+            ))}
+          </ul>
+        )}
+        <div className="rorawlabel">On-chain policy (unchanged)</div>
+        <pre className="rorawpolicy">{original}</pre>
+      </div>
+    </div>
   );
 }

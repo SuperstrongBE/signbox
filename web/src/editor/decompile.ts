@@ -199,7 +199,11 @@ function matchCondition(
 }
 
 function decisionFields(rule: Rule, label: string, warnings: string[]): Fields {
-  const fields: Fields = { effect: rule.effect === "deny" ? "deny" : "allow" };
+  const fields: Fields = {
+    effect: rule.effect === "deny" ? "deny" : "allow",
+    // Preserve the rule id so the round trip is lossless (#38).
+    id: typeof rule.id === "string" ? rule.id : "",
+  };
   const limits = rule.limits ?? {};
   const supported = new Set([
     "maxPerTransaction",

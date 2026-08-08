@@ -184,6 +184,27 @@
 .editstate { grid-column: 1 / -1; display: grid; place-items: center; gap: 14px; color: var(--mut); font-size: 13px; }
 .editstate b { color: var(--accent); }
 .editstate.error { color: var(--deny); }
+
+/* ---------- read-only / invalid policy (#38) ---------- */
+.editbanner .ebreadonly { color: var(--bool); font-size: 11px; font-weight: 600; }
+.editbanner .ebreadonly.err { color: var(--deny); }
+.rocard {
+  grid-column: 1 / -1; overflow: auto; padding: 64px 22px 28px;
+  display: flex; flex-direction: column; align-items: center;
+}
+.rocard > * { width: min(760px, 100%); }
+.rocard h3 { margin: 0 0 8px; font-size: 16px; font-weight: 640; color: var(--ink); }
+.rocard .rolead { margin: 0 0 16px; color: var(--mut); line-height: 1.6; font-size: 13px; }
+.rocard .roreasons { margin: 0 0 18px; padding: 12px 14px; list-style: none;
+  background: #1a140b; border: 1px solid var(--bool); color: var(--bool);
+  font-size: 12.5px; line-height: 1.5; display: flex; flex-direction: column; gap: 6px; }
+.rocard .rorawlabel { text-transform: uppercase; letter-spacing: 0.5px; font-size: 10.5px;
+  color: var(--mut2); margin: 0 0 6px; }
+.rocard .rorawpolicy {
+  margin: 0; padding: 14px 16px; background: #0d1017; border: 1px solid var(--line2);
+  font-family: var(--monoxs); font-size: 12px; line-height: 1.5; color: var(--ink);
+  white-space: pre; overflow-x: auto; max-height: 60vh;
+}
 @media (max-width: 1100px) { .editor { grid-template-columns: 176px 1fr; } .inspector { display: none; } }
 .palette { display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); overflow: hidden; }
 .palscroll { flex: 1; min-height: 0; overflow: auto; padding: 13px 11px; }

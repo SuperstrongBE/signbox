@@ -121,6 +121,11 @@ export const SPECS: Record<NodeType, NodeSpec> = {
       { side: "out", key: "out", label: "→ verdict", type: "verdict" },
     ],
     defaults: () => ({
+      // Preserved rule id (#38): populated from the loaded policy so a
+      // decompile→compile round trip keeps the original id byte-for-byte.
+      // Empty for new rules — compile then generates a slug. Not rendered
+      // (node bodies use a curated control set), so it stays invisible.
+      id: "",
       effect: "allow",
       useLimit: false,
       maxPerTx: "1.0000 XPR",
