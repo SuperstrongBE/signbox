@@ -106,7 +106,7 @@ describe("validateOnboardingPayload (#41, trust-anchored)", () => {
       account: "eosio",
       name: "updateauth",
       authorization: [{ actor: "funagent", permission: "owner" }],
-      data: { account: "funagent", permission: "active", parent: "owner", auth: keyAuth("PUB_K1_attacker") },
+      data: { account: "funagent", permission: "active", parent: "owner", auth: keyAuth("attacker-cokey-placeholder") },
     });
     expect(validateOnboardingPayload(p, TRUSTED).ok).toBe(false);
   });
@@ -130,7 +130,7 @@ describe("validateOnboardingPayload (#41, trust-anchored)", () => {
     const p = clone(validPayload());
     (p.actions[0]!.data as { owner: unknown }).owner = {
       threshold: 1,
-      keys: [{ key: AUTHORITY_KEY, weight: 1 }, { key: "PUB_K1_attacker", weight: 1 }],
+      keys: [{ key: AUTHORITY_KEY, weight: 1 }, { key: "attacker-cokey-placeholder", weight: 1 }],
       accounts: [],
       waits: [],
     };
