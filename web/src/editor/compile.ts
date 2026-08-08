@@ -128,7 +128,11 @@ function compileRule(nodes: GraphNode[], wires: Wire[], decision: GraphNode): { 
   }
 
   const routeBase = routeif !== undefined ? [String(routeif.fields["contract"]), String(routeif.fields["action"])] : [String(decision.fields["effect"])];
-  const rule: CompiledRule = { id: slug([String(decision.fields["effect"]), ...routeBase]), effect: String(decision.fields["effect"]), match };
+  // Preserve a loaded rule's id (#38) so a round trip is lossless; new rules
+  // (no stored id) get a generated slug.
+  const preservedId = typeof decision.fields["id"] === "string" ? (decision.fields["id"] as string) : "";
+  const ruleId = preservedId !== "" ? preservedId : slug([String(decision.fields["effect"]), ...routeBase]);
+  const rule: CompiledRule = { id: ruleId, effect: String(decision.fields["effect"]), match };
 
   if (decision.fields["useLimit"] === true && decision.fields["effect"] === "allow") {
     const limits: Record<string, unknown> = {};
