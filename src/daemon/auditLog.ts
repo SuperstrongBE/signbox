@@ -18,7 +18,12 @@ import { canonicalize } from "../core/canonical/jcs.js";
 export interface AuditEntryInput {
   requestId: string;
   agent: string;
-  decision: "signed" | "denied";
+  /**
+   * The primary decision (#42): `signed`/`denied` for the sign path, `broadcast`
+   * for a standalone broadcast submission. A fused sign+broadcast records
+   * `signed` AND carries the `broadcast` outcome below — both are auditable.
+   */
+  decision: "signed" | "denied" | "broadcast";
   /** Deny code, when denied. */
   code?: string;
   /** Matching allow rule ids, when signed. */
@@ -28,6 +33,12 @@ export interface AuditEntryInput {
   contracts: string[];
   /** Transaction digest, when signed. */
   digest?: string;
+  /**
+   * Network-submission outcome (#42), present whenever the daemon broadcast:
+   * on the fused sign+broadcast path and on the standalone broadcast op.
+   * Distinguishes accepted / rejected / ambiguous ("unknown") submissions.
+   */
+  broadcast?: "accepted" | "rejected" | "ambiguous";
   timestampMs: number;
 }
 
@@ -49,14 +60,22 @@ interface AuditRow {
   policy_version: number | null;
   contracts: string;
   digest: string | null;
+  broadcast: string | null;
   timestamp_ms: number;
   prev_hash: string;
   entry_hash: string;
 }
 
-/** The exact fields covered by the chain hash (order fixed by JCS). */
+/**
+ * The exact fields covered by the chain hash (order fixed by JCS).
+ *
+ * `broadcast` is included ONLY when present (#42): entries written before the
+ * field existed never carried it, so omitting the key when undefined keeps
+ * their canonical form — and thus their hash — byte-for-byte identical. Adding
+ * it unconditionally would break `verify()` on every pre-existing log.
+ */
 function hashableFields(seq: number, prevHash: string, e: AuditEntryInput): Record<string, unknown> {
-  return {
+  const fields: Record<string, unknown> = {
     seq,
     prevHash,
     requestId: e.requestId,
@@ -69,6 +88,8 @@ function hashableFields(seq: number, prevHash: string, e: AuditEntryInput): Reco
     digest: e.digest ?? null,
     timestampMs: e.timestampMs,
   };
+  if (e.broadcast !== undefined) fields["broadcast"] = e.broadcast;
+  return fields;
 }
 
 function computeHash(seq: number, prevHash: string, e: AuditEntryInput): string {
@@ -94,12 +115,20 @@ export class AuditLog {
         policy_version INTEGER,
         contracts TEXT NOT NULL,
         digest TEXT,
+        broadcast TEXT,
         timestamp_ms INTEGER NOT NULL,
         prev_hash TEXT NOT NULL,
         entry_hash TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_audit_agent ON audit_log (agent, timestamp_ms);
     `);
+    // Migration (#42): a log created before the broadcast column existed lacks
+    // it — add it nullable. Old rows read back as broadcast:null, which never
+    // enters the hash (see hashableFields), so verify() stays intact.
+    const cols = this.db.prepare(`PRAGMA table_info(audit_log)`).all() as { name: string }[];
+    if (!cols.some((c) => c.name === "broadcast")) {
+      this.db.exec(`ALTER TABLE audit_log ADD COLUMN broadcast TEXT`);
+    }
   }
 
   close(): void {
@@ -119,9 +148,9 @@ export class AuditLog {
         .prepare(
           `INSERT INTO audit_log
              (seq, request_id, agent, decision, code, rule_ids, policy_version,
-              contracts, digest, timestamp_ms, prev_hash, entry_hash)
+              contracts, digest, broadcast, timestamp_ms, prev_hash, entry_hash)
            VALUES (@seq, @request_id, @agent, @decision, @code, @rule_ids, @policy_version,
-              @contracts, @digest, @timestamp_ms, @prev_hash, @entry_hash)`,
+              @contracts, @digest, @broadcast, @timestamp_ms, @prev_hash, @entry_hash)`,
         )
         .run({
           seq,
@@ -133,6 +162,7 @@ export class AuditLog {
           policy_version: entry.policyVersion ?? null,
           contracts: JSON.stringify(entry.contracts),
           digest: entry.digest ?? null,
+          broadcast: entry.broadcast ?? null,
           timestamp_ms: entry.timestampMs,
           prev_hash: prevHash,
           entry_hash: entryHash,
@@ -147,7 +177,7 @@ export class AuditLog {
       seq: row.seq,
       requestId: row.request_id,
       agent: row.agent,
-      decision: row.decision as "signed" | "denied",
+      decision: row.decision as "signed" | "denied" | "broadcast",
       contracts: JSON.parse(row.contracts) as string[],
       timestampMs: row.timestamp_ms,
       prevHash: row.prev_hash,
@@ -157,6 +187,7 @@ export class AuditLog {
     if (row.rule_ids !== null) record.ruleIds = JSON.parse(row.rule_ids) as string[];
     if (row.policy_version !== null) record.policyVersion = row.policy_version;
     if (row.digest !== null) record.digest = row.digest;
+    if (row.broadcast !== null) record.broadcast = row.broadcast as "accepted" | "rejected" | "ambiguous";
     return record;
   }
 

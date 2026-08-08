@@ -15,7 +15,7 @@
 import { randomBytes } from "node:crypto";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { SignBoxDaemon } from "../daemon/server.js";
+import { SignBoxDaemon, type DaemonDependencies } from "../daemon/server.js";
 import { QuotaJournal } from "../daemon/quotaJournal.js";
 import { PolicyCache } from "../daemon/policyCache.js";
 import { AuthorityCache, type AuthorityResolver } from "../daemon/authorityCache.js";
@@ -69,7 +69,13 @@ export async function startDaemonFromConfig(
 
   const signer = overrides.signer ?? chainModule.createSigner(wiring, keystore);
 
-  const broadcaster = overrides.broadcaster ?? chainModule.createBroadcaster(wiring);
+  // Broadcast is a SEPARATE, opt-in capability (#42): wire a broadcaster ONLY
+  // when the deployment enabled it. Left off, every broadcast — fused or
+  // standalone — is refused; a daemon-wide broadcaster can never silently turn
+  // a sign-only agent into a sign-and-broadcast one.
+  const broadcastCfg = config.broadcast ?? { enabled: false, agents: [] };
+  const broadcaster =
+    overrides.broadcaster ?? (broadcastCfg.enabled ? chainModule.createBroadcaster(wiring) : undefined);
   const relay = overrides.relay ?? chainModule.createRelay(wiring);
 
   const quotas = new QuotaJournal(config.stateDbPath);
@@ -92,11 +98,15 @@ export async function startDaemonFromConfig(
 
   const decode = chainModule.decode.bind(chainModule);
   const dialect = chainModule.dialect;
+  // Build deps with optional seams present ONLY when defined (the daemon uses
+  // exactOptionalPropertyTypes: a `broadcaster: undefined` is not the same as
+  // an absent one — an absent broadcaster is what disables the submit path).
+  const deps: DaemonDependencies = { decode, dialect, signer, relay, quotas, policyCache, audit, authority };
+  if (broadcaster !== undefined) deps.broadcaster = broadcaster;
+  if (overrides.now !== undefined) deps.now = overrides.now;
   const daemon = new SignBoxDaemon(
     { socketPath: config.socketPath, adminSocketPath: config.adminSocketPath },
-    overrides.now === undefined
-      ? { decode, dialect, signer, broadcaster, relay, quotas, policyCache, audit, authority }
-      : { decode, dialect, signer, broadcaster, relay, quotas, policyCache, audit, authority, now: overrides.now },
+    deps,
   );
 
   const wipeAll = (): void => keystore.wipe();
@@ -146,6 +156,11 @@ export async function startDaemonFromConfig(
           chain: context,
           agent: meta.agent,
           permission: meta.permission,
+        },
+        // Sign-only unless the deployment granted broadcast to this agent (#42).
+        capabilities: {
+          sign: true,
+          broadcast: broadcastCfg.enabled && broadcastCfg.agents.includes(meta.agent),
         },
       });
       registered.push(meta.agent);

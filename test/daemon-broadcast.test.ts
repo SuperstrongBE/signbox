@@ -123,6 +123,8 @@ function build(outcome: BroadcastOutcome): {
     enabled: true,
     token: Buffer.from(TOKEN, "utf8"),
     key: KEY,
+    // The fused sign+broadcast path requires the broadcast capability (#42).
+    capabilities: { sign: true, broadcast: true },
   };
   daemon.registerAgent(runtime);
   return { daemon, quotas, broadcaster };
