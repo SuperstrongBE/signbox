@@ -10,13 +10,14 @@
  * the actions and flow tests.
  */
 
-import { JsonRpc, Numeric } from "@proton/js";
+import { JsonRpc } from "@proton/js";
 // The package is mis-packaged (type:module + CJS main, no exports map), so the
 // bare specifier breaks under Node ESM; import the ESM build directly.
 import { SigningRequest } from "@proton/signing-request/lib/proton-signing-request.m.js";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { verifiedRpc } from "./rpc.js";
 import { buildOnboardingActions, summarizeActions } from "./onboardingActions.js";
+import { authorizesExclusively } from "./keyauth.js";
 import type {
   BuiltRequest,
   OnboardingBackend,
@@ -213,22 +214,23 @@ export class XprOnboardingBackend implements OnboardingBackend {
     } catch {
       return { ok: false, reason: "cannot read agent account" };
     }
-    type Perm = { perm_name?: string; required_auth?: { keys?: { key?: string }[] } };
+    type Perm = { perm_name?: string; required_auth?: { threshold?: number; keys?: { key?: string; weight?: number }[]; accounts?: unknown[]; waits?: unknown[] } };
     const perms = (account.permissions ?? []) as Perm[];
     const perm = perms.find((p) => p.perm_name === args.input.permission);
     if (perm === undefined) {
       return { ok: false, reason: `permission "${args.input.permission}" not found` };
     }
-    const keys = perm.required_auth?.keys ?? [];
-    if (!keys.some((k) => normalizeKey(k.key) === normalizeKey(args.agentPublicKey))) {
-      return { ok: false, reason: "agent permission does not hold the agent key" };
+    // EXCLUSIVE control (#41 review): the signing permission must hold ONLY the
+    // agent key (threshold-1, no co-signers) — an authority containing the
+    // agent key AMONG others would let a co-key sign independently.
+    if (!authorizesExclusively(perm.required_auth, args.agentPublicKey)) {
+      return { ok: false, reason: "agent permission is not exclusively the agent key" };
     }
 
-    // Defense in depth (#41): the agent account's OWNER must be controlled by
-    // the AUTHORITY's key, not an attacker's. A forged onboarding payload that
-    // set owner to another key is an account-takeover vector the active-key
-    // check above does NOT catch — verify it independently against the
-    // authority's own on-chain key.
+    // Defense in depth (#41): the agent account's OWNER must be EXCLUSIVELY the
+    // AUTHORITY's key. A forged onboarding payload that added an attacker key to
+    // owner (threshold 1) is an account-takeover vector the active-key check
+    // does NOT catch — verify it independently against the authority's own key.
     let authorityKey: string;
     try {
       authorityKey = await this.resolveActiveKey(args.input.authority);
@@ -236,9 +238,8 @@ export class XprOnboardingBackend implements OnboardingBackend {
       return { ok: false, reason: "cannot resolve the authority key" };
     }
     const owner = perms.find((p) => p.perm_name === "owner");
-    const ownerKeys = owner?.required_auth?.keys ?? [];
-    if (!ownerKeys.some((k) => normalizeKey(k.key) === normalizeKey(authorityKey))) {
-      return { ok: false, reason: "agent owner is not controlled by the authority" };
+    if (!authorizesExclusively(owner?.required_auth, authorityKey)) {
+      return { ok: false, reason: "agent owner is not exclusively the authority key" };
     }
 
     // The policy row must exist with the expected authority, permission and
@@ -260,21 +261,4 @@ export class XprOnboardingBackend implements OnboardingBackend {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Canonicalize a public key so the legacy `EOS…` form and the modern
- * `PUB_K1_…` form of the SAME key compare equal. get_account may return either
- * representation; parsing to (type + raw bytes) makes the comparison
- * format-agnostic.
- */
-function normalizeKey(key: string | undefined): string {
-  const s = (key ?? "").trim();
-  if (s === "") return "";
-  try {
-    const parsed = Numeric.stringToPublicKey(s);
-    return `${parsed.type}:${Buffer.from(parsed.data).toString("hex")}`;
-  } catch {
-    return s;
-  }
 }

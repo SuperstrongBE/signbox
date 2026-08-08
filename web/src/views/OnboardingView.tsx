@@ -16,7 +16,11 @@ import { Numeric } from "@proton/js";
 import { clearPayload, type OnboardPayload } from "../link";
 import { connect, type Connected } from "../wallet";
 import { getAccount } from "../chain/rpc";
+import { NETWORKS, SIGNBOX_CONTRACT, type NetworkDescriptor } from "../networks";
 import { validateOnboardingPayload, type OnboardDerived } from "@sbx-onboard/validate";
+
+// The policy chain name for the empty deny-all doc — this companion is XPR.
+const CHAIN_NAME = "XPR";
 
 type Phase = "checking" | "invalid" | "idle" | "connecting" | "connected" | "signing" | "done" | "error";
 
@@ -29,29 +33,41 @@ function normKey(key: string): string | null {
   }
 }
 
-/** Full validation: template + stale guard + owner-key ↔ authority-key binding. */
+/**
+ * Full validation. `trusted` is the COMPILED network descriptor for this
+ * payload's chain id — the payload's own `endpoints`/`signboxContract` are NOT
+ * trusted (a crafted fragment controls them, and a malicious RPC would forge
+ * the authority key). Facts are read from the trusted endpoints only.
+ */
 async function verifyPayload(
   payload: OnboardPayload,
+  trusted: NetworkDescriptor,
 ): Promise<{ ok: true; derived: OnboardDerived } | { ok: false; reason: string }> {
   let authorityAccount, agentAccount;
   try {
     [authorityAccount, agentAccount] = await Promise.all([
-      getAccount(payload.endpoints, payload.chainId, payload.summary.authority),
-      getAccount(payload.endpoints, payload.chainId, payload.summary.agent),
+      getAccount(trusted.endpoints, trusted.chainId, payload.summary.authority),
+      getAccount(trusted.endpoints, trusted.chainId, payload.summary.agent),
     ]);
   } catch {
-    return { ok: false, reason: "could not read the chain to verify this request" };
+    return { ok: false, reason: "could not reach a trusted endpoint to verify this request" };
   }
   if (authorityAccount === null) {
     return { ok: false, reason: "the authority account does not exist on this chain" };
   }
 
-  const structural = validateOnboardingPayload(payload, { agentAccountExists: agentAccount !== null });
+  const structural = validateOnboardingPayload(payload, {
+    chainId: trusted.chainId,
+    chainName: CHAIN_NAME,
+    signboxContract: SIGNBOX_CONTRACT,
+    agentAccountExists: agentAccount !== null,
+  });
   if (!structural.ok || structural.derived === undefined) {
     return { ok: false, reason: structural.errors[0] ?? "the request does not match a valid onboarding" };
   }
 
-  // The owner key the payload installs MUST be the authority's real key.
+  // The owner key the payload installs MUST be the authority's real key,
+  // read from a TRUSTED endpoint — the account-takeover guard.
   const authorityKey = authorityAccount.permissions.find((p) => p.perm_name === "active")?.required_auth.keys[0]?.key;
   const declaredOwner = normKey(structural.derived.ownerKey);
   const realAuthority = authorityKey !== undefined ? normKey(authorityKey) : null;
@@ -68,32 +84,52 @@ export function OnboardingView({ payload }: { payload: OnboardPayload }) {
   const [txid, setTxid] = useState<string>("");
   const [error, setError] = useState<string>("");
 
+  // The trusted network descriptor for this payload's chain id — resolved from
+  // COMPILED config, never from the payload. An unknown chain id is refused.
+  const trusted = useMemo(
+    () => Object.values(NETWORKS).find((n) => n.chainId === payload.chainId) ?? null,
+    [payload],
+  );
+
   // Validate up front — nothing is signable until this passes.
   useEffect(() => {
     let alive = true;
-    void verifyPayload(payload).then((r) => {
-      if (!alive) return;
-      if (r.ok) {
-        setDerived(r.derived);
-        setPhase("idle");
-      } else {
-        setError(r.reason);
+    if (trusted === null) {
+      setError("this request is for a chain the companion does not recognize");
+      setPhase("invalid");
+      return;
+    }
+    void verifyPayload(payload, trusted)
+      .then((r) => {
+        if (!alive) return;
+        if (r.ok) {
+          setDerived(r.derived);
+          setPhase("idle");
+        } else {
+          setError(r.reason);
+          setPhase("invalid");
+        }
+      })
+      .catch(() => {
+        if (!alive) return;
+        setError("this request could not be verified");
         setPhase("invalid");
-      }
-    });
+      });
     return () => {
       alive = false;
     };
-  }, [payload]);
+  }, [payload, trusted]);
 
   const authorityMismatch = session !== null && derived !== null && session.actor !== derived.authority;
   const summaryLines = useMemo(() => (derived === null ? [] : describe(payload, derived)), [payload, derived]);
 
   async function onConnect() {
+    if (trusted === null) return;
     setError("");
     setPhase("connecting");
     try {
-      const c = await connect(payload);
+      // Open the wallet on the TRUSTED endpoints/network, not the payload's.
+      const c = await connect({ ...payload, network: trusted.network, endpoints: trusted.endpoints });
       setSession(c);
       setPhase("connected");
     } catch (e) {
@@ -103,12 +139,12 @@ export function OnboardingView({ payload }: { payload: OnboardPayload }) {
   }
 
   async function onSign() {
-    if (session === null) return;
+    if (session === null || trusted === null) return;
     setError("");
     setPhase("signing");
     // Re-validate immediately before signing (#41): guard against any state
     // that changed since the page loaded (e.g. the account now exists).
-    const recheck = await verifyPayload(payload);
+    const recheck = await verifyPayload(payload, trusted);
     if (!recheck.ok) {
       setError(recheck.reason);
       setPhase("invalid");

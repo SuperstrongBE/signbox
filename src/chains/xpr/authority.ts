@@ -13,8 +13,9 @@
  * the same key compare equal.
  */
 
-import { JsonRpc, Numeric } from "@proton/js";
+import { JsonRpc } from "@proton/js";
 import { verifiedRpc } from "./rpc.js";
+import { authorizesExclusively, normalizePublicKey } from "./keyauth.js";
 import type { ChainWiring, KeyAuthorityResult } from "../registry.js";
 
 interface AntelopeKeyWeight {
@@ -30,15 +31,6 @@ interface AntelopeAuthority {
 interface AntelopePermission {
   perm_name: string;
   required_auth: AntelopeAuthority;
-}
-
-/** Canonical PUB_K1 form, or null if the string is not a parsable public key. */
-function normalizePublicKey(key: string): string | null {
-  try {
-    return Numeric.publicKeyToString(Numeric.stringToPublicKey(key));
-  } catch {
-    return null;
-  }
 }
 
 export async function resolveXprKeyAuthority(
@@ -58,24 +50,8 @@ export async function resolveXprKeyAuthority(
   if (perm === undefined) {
     return { authorized: false, reason: `permission "${permission}" not found on account` };
   }
-
-  const auth = perm.required_auth;
-  if (auth.threshold !== 1) {
-    return { authorized: false, reason: "permission is not threshold-1" };
-  }
-  if ((auth.accounts?.length ?? 0) !== 0 || (auth.waits?.length ?? 0) !== 0) {
-    return { authorized: false, reason: "permission delegates to accounts or waits" };
-  }
-  if (!Array.isArray(auth.keys) || auth.keys.length !== 1) {
-    return { authorized: false, reason: "permission does not hold exactly one key" };
-  }
-  const only = auth.keys[0]!;
-  if (only.weight < auth.threshold) {
-    return { authorized: false, reason: "key weight is below the threshold" };
-  }
-  const onChain = normalizePublicKey(only.key);
-  if (onChain === null || onChain !== expected) {
-    return { authorized: false, reason: "on-chain key does not match the daemon key" };
+  if (!authorizesExclusively(perm.required_auth, expectedPublicKey)) {
+    return { authorized: false, reason: "permission is not an exclusive threshold-1 key for the daemon key" };
   }
   return { authorized: true };
 }
