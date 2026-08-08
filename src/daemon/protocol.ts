@@ -62,6 +62,32 @@ export type SignResponseJson =
     };
 
 /**
+ * Standalone broadcast request (#42): submit an ALREADY-SIGNED transaction for
+ * network submission, WITHOUT ever reaching the signer or the private key. It
+ * is a distinct capability from signing (§5.5): a principal granted only
+ * `broadcast` can submit bytes but can never obtain a signature, and a
+ * sign-only principal can never submit. Discriminated by `op: "broadcast"`.
+ */
+export interface BroadcastRequestJson {
+  op: "broadcast";
+  requestId: string;
+  agent: string;
+  chain: string;
+  network: string;
+  chainId: string;
+  /** The opaque signed transaction produced earlier by a sign request. */
+  signedTransaction: unknown;
+  requestedAt: string;
+  expiresAt: string;
+  nonce: string;
+  token: string;
+}
+
+export type BroadcastResponseJson =
+  | { requestId: string; status: "broadcast"; report: BroadcastReport }
+  | { requestId: string; status: "denied"; code: DenyCode; safeReason: string };
+
+/**
  * Read-only operations on the same authenticated socket (§12): the agent can
  * ask who it is and read public chain data through the daemon's relay, without
  * any path to signing. Discriminated from a sign request by `op`.
@@ -126,6 +152,37 @@ const signRequestSchema = {
   },
 } as const;
 
+const broadcastRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "op",
+    "requestId",
+    "agent",
+    "chain",
+    "network",
+    "chainId",
+    "signedTransaction",
+    "requestedAt",
+    "expiresAt",
+    "nonce",
+    "token",
+  ],
+  properties: {
+    op: { const: "broadcast" },
+    requestId: { type: "string", pattern: "^[A-Za-z0-9-]{8,64}$" },
+    agent: { type: "string", pattern: "^[a-z1-5.]{1,12}$" },
+    chain: { type: "string", minLength: 1, maxLength: 32 },
+    network: { type: "string", minLength: 1, maxLength: 32 },
+    chainId: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    signedTransaction: { type: "object" },
+    requestedAt: { type: "string", pattern: ISO_DATETIME_PATTERN },
+    expiresAt: { type: "string", pattern: ISO_DATETIME_PATTERN },
+    nonce: { type: "string", pattern: "^[A-Za-z0-9_-]{16,128}$" },
+    token: { type: "string", pattern: "^[A-Za-z0-9_-]{16,256}$" },
+  },
+} as const;
+
 const readRequestSchema = {
   type: "object",
   additionalProperties: false,
@@ -145,6 +202,7 @@ const readRequestSchema = {
 const ajv = new Ajv({ strict: true, allErrors: false });
 const validateShape: ValidateFunction = ajv.compile(signRequestSchema);
 const validateReadShape: ValidateFunction = ajv.compile(readRequestSchema);
+const validateBroadcastShape: ValidateFunction = ajv.compile(broadcastRequestSchema);
 
 /** Parse and validate one request line. Throws ValidationError on anything off. */
 export function parseSignRequest(line: string): SignRequestJson {
@@ -168,13 +226,34 @@ export function parseSignRequest(line: string): SignRequestJson {
 }
 
 /** Peek the operation kind without full validation. Defaults to "sign". */
-export function peekOp(line: string): "sign" | "whoami" | "query" {
+export function peekOp(line: string): "sign" | "broadcast" | "whoami" | "query" {
   try {
     const op = (JSON.parse(line) as { op?: unknown }).op;
-    return op === "whoami" || op === "query" ? op : "sign";
+    return op === "whoami" || op === "query" || op === "broadcast" ? op : "sign";
   } catch {
     return "sign";
   }
+}
+
+/** Parse and validate a standalone broadcast request line. Throws on anything off. */
+export function parseBroadcastRequest(line: string): BroadcastRequestJson {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    throw new ValidationError("request is not valid JSON");
+  }
+  if (!validateBroadcastShape(parsed)) {
+    const detail = validateBroadcastShape.errors?.[0];
+    throw new ValidationError(
+      `broadcast request schema violation${detail ? `: ${detail.instancePath || "/"} ${detail.message ?? ""}` : ""}`,
+    );
+  }
+  const request = parsed as BroadcastRequestJson;
+  if (Number.isNaN(Date.parse(request.requestedAt)) || Number.isNaN(Date.parse(request.expiresAt))) {
+    throw new ValidationError("request timestamps are not valid dates");
+  }
+  return request;
 }
 
 /** Parse and validate a read-only request line. Throws on anything off. */

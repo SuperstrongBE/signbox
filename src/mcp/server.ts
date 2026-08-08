@@ -19,7 +19,7 @@ import { validatePolicy } from "../core/policy/schema.js";
 import { evaluatePolicy } from "../core/policy/engine.js";
 import { canonicalize } from "../core/canonical/jcs.js";
 import { readKeystoreMetadata } from "../keystore/encryptedFile.js";
-import { signViaDaemon, readToken } from "../cli/client.js";
+import { signViaDaemon, broadcastViaDaemon, readToken } from "../cli/client.js";
 import { discoverKeystores } from "../cli/daemonRunner.js";
 import { chainContextOf, type SignBoxConfig } from "../cli/config.js";
 import { createHash } from "node:crypto";
@@ -175,13 +175,22 @@ export function buildMcpServer(config: SignBoxConfig, options: McpOptions): McpS
     server.registerTool(
       "signbox_transaction_push",
       {
-        description: "Broadcast an already-signed transaction. Enabled by explicit configuration.",
-        inputSchema: { signedTransaction: z.unknown() },
+        description:
+          "Ask the running SignBox daemon to submit an already-signed transaction. Requires the " +
+          "agent's broadcast capability; never signs. Returns the submission outcome or a refusal.",
+        inputSchema: { agent: z.string(), signedTransaction: z.unknown() },
       },
-      async ({ signedTransaction }): Promise<ToolResult> => {
+      async ({ agent, signedTransaction }): Promise<ToolResult> => {
         try {
-          const receipt = await chainModule.broadcastSigned(wiring, signedTransaction);
-          return ok({ pushed: true, receipt });
+          const token = readToken(join(config.tokenDir, `${agent}.token`));
+          const response = await broadcastViaDaemon({
+            socketPath: config.socketPath,
+            agent,
+            context,
+            signedTransaction,
+            token,
+          });
+          return ok(response);
         } catch (error) {
           return err((error as Error).message);
         }

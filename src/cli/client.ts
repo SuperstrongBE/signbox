@@ -8,7 +8,7 @@ import { connect } from "node:net";
 import { randomUUID, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { SignBoxError, ValidationError } from "../core/errors.js";
-import type { ReadResponseJson, SignResponseJson } from "../daemon/protocol.js";
+import type { BroadcastResponseJson, ReadResponseJson, SignResponseJson } from "../daemon/protocol.js";
 import type { AdminCommand, AdminResponse } from "../daemon/server.js";
 import type { ChainContext } from "../core/types.js";
 
@@ -67,6 +67,42 @@ export async function signViaDaemon(options: SignViaDaemonOptions): Promise<Sign
   };
   const answer = await sendLine(options.socketPath, JSON.stringify(request));
   return JSON.parse(answer) as SignResponseJson;
+}
+
+export interface BroadcastViaDaemonOptions {
+  socketPath: string;
+  agent: string;
+  context: ChainContext;
+  /** An already-signed transaction, produced earlier by a sign request. */
+  signedTransaction: unknown;
+  token: string;
+  ttlMs?: number;
+}
+
+/**
+ * Ask the daemon to submit an already-signed transaction (#42). This is the
+ * standalone broadcast op: it never reaches the signer, and requires the
+ * agent's independent `broadcast` capability.
+ */
+export async function broadcastViaDaemon(
+  options: BroadcastViaDaemonOptions,
+): Promise<BroadcastResponseJson> {
+  const now = Date.now();
+  const request = {
+    op: "broadcast",
+    requestId: randomUUID(),
+    agent: options.agent,
+    chain: options.context.chain,
+    network: options.context.network,
+    chainId: options.context.chainId,
+    signedTransaction: options.signedTransaction,
+    requestedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + (options.ttlMs ?? 60_000)).toISOString(),
+    nonce: randomBytes(24).toString("base64url"),
+    token: options.token,
+  };
+  const answer = await sendLine(options.socketPath, JSON.stringify(request));
+  return JSON.parse(answer) as BroadcastResponseJson;
 }
 
 export interface ReadViaDaemonOptions {

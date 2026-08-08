@@ -21,6 +21,25 @@ import { ValidationError } from "../core/errors.js";
 import { getChain } from "../chains/index.js";
 import type { ChainContext } from "../core/types.js";
 
+/**
+ * Broadcast capability (#42). SEPARATE from signing: SignBox never submits on
+ * an agent's behalf unless a deployment explicitly opts in here. Disabled by
+ * default (least privilege) — a deployment can leave broadcasting off entirely.
+ */
+export interface BroadcastConfig {
+  /**
+   * When false (default) the daemon wires NO broadcaster: every broadcast
+   * request — fused sign+broadcast or the standalone op — is refused. This is
+   * the "disable broadcast support entirely" switch.
+   */
+  enabled: boolean;
+  /**
+   * Allow-list of agents granted the broadcast capability. Only meaningful
+   * when `enabled` is true; an agent not listed can sign but never broadcast.
+   */
+  agents: string[];
+}
+
 export interface SignBoxConfig {
   /** A chain registered in src/chains (INV-013). Default "XPR". */
   chain: string;
@@ -36,6 +55,11 @@ export interface SignBoxConfig {
   adminSocketPath: string;
   /** Shared local state: quota journal + policy cache (§14.2). */
   stateDbPath: string;
+  /**
+   * Broadcast capability (#42). Always populated by loadConfig (default
+   * disabled); optional in the type only so hand-built test configs stay valid.
+   */
+  broadcast?: BroadcastConfig;
 }
 
 /**
@@ -64,6 +88,18 @@ const configSchema = {
     socketPath: { type: "string", minLength: 1 },
     adminSocketPath: { type: "string", minLength: 1 },
     stateDbPath: { type: "string", minLength: 1 },
+    broadcast: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        enabled: { type: "boolean" },
+        agents: {
+          type: "array",
+          maxItems: 64,
+          items: { type: "string", pattern: "^[a-z1-5.]{1,12}$" },
+        },
+      },
+    },
   },
 } as const;
 
@@ -79,6 +115,7 @@ interface ConfigFile {
   socketPath?: string;
   adminSocketPath?: string;
   stateDbPath?: string;
+  broadcast?: { enabled?: boolean; agents?: string[] };
 }
 
 const ajv = new Ajv({ strict: true, allErrors: false });
@@ -170,6 +207,11 @@ export function loadConfig(path: string = DEFAULT_CONFIG_PATH, overrides: Config
     adminSocketPath:
       file.adminSocketPath !== undefined ? expandPath(file.adminSocketPath) : join(baseDir, "signbox.admin.sock"),
     stateDbPath: file.stateDbPath !== undefined ? expandPath(file.stateDbPath) : join(baseDir, "state.db"),
+    // Broadcast is OFF unless a deployment opts in (#42) — never inferred.
+    broadcast: {
+      enabled: file.broadcast?.enabled ?? false,
+      agents: file.broadcast?.agents ?? [],
+    },
   };
 }
 

@@ -9,11 +9,16 @@
  *                          local --policy file to test one before deploying;
  * - `transaction sign`     asks the RUNNING DAEMON to sign (the CLI holds
  *                          no key and evaluates no policy on this path);
- * - `transaction push`     broadcasts an already-signed transaction;
+ * - `transaction push`     submits an already-signed transaction THROUGH the
+ *                          daemon (#42): a separate, audited op that requires
+ *                          the agent's `broadcast` capability and never signs;
  * - `sign --push`          signs AND submits through the daemon: the signature
  *                          never leaves it and the stateful quota follows the
  *                          chain outcome (committed only if the tx lands,
- *                          released on a deterministic rejection — §13).
+ *                          released on a deterministic rejection — §13). Needs
+ *                          the agent's `broadcast` capability; if the daemon
+ *                          cannot broadcast the request is DENIED, never
+ *                          silently submitted client-side.
  *
  * Output is structured JSON on stdout. Secrets never appear (INV-002).
  */
@@ -34,7 +39,7 @@ import { resolveProviders } from "../daemon/providerResolver.js";
 import { DEFAULT_CONFIG_PATH, DEFAULT_CHAIN, expandPath, loadConfig, chainContextOf } from "./config.js";
 import { promptPassphrase } from "./passphrase.js";
 import { isInteractive, promptText, promptSelect, validateAccountName } from "./prompt.js";
-import { adminCommand, readToken, readViaDaemon, signViaDaemon } from "./client.js";
+import { adminCommand, broadcastViaDaemon, readToken, readViaDaemon, signViaDaemon } from "./client.js";
 import { startDaemonFromConfig, discoverKeystores } from "./daemonRunner.js";
 import { AuditLog } from "../daemon/auditLog.js";
 import type { ChainContext } from "../core/types.js";
@@ -336,17 +341,9 @@ tx.command("sign")
         broadcast: options.push,
       });
 
-      // Legacy fallback: a sign-only daemon (no broadcaster) returns the signed
-      // bytes without a broadcast report. Submit them client-side, as before.
-      if (response.status === "signed" && options.push && response.broadcast === undefined) {
-        const receipt = await getChain(config.chain).broadcastSigned(
-          { endpoints: config.endpoints, chainId: config.chainId },
-          response.signedTransaction,
-        );
-        print({ ...response, pushed: true, receipt });
-        return;
-      }
-
+      // No client-side fallback (#42): with --push the DAEMON broadcasts, or
+      // the request is denied (CAPABILITY_DENIED / BROADCAST_UNAVAILABLE). A
+      // sign-only deployment must never be silently upgraded to submit here.
       print(response);
       // Non-zero exit on anything that did not result in a landed/valid tx.
       if (response.status === "denied") process.exit(2);
@@ -359,19 +356,26 @@ tx.command("sign")
   });
 
 tx.command("push")
-  .description("broadcast an already-signed transaction (§11.6)")
+  .description("submit an already-signed transaction through the daemon (§11.6, #42)")
+  .requiredOption("--agent <name>", "agent account name (must hold the broadcast capability)")
   .requiredOption("--signed-transaction <file>", "signed transaction JSON file")
-  .option("--network <network>", "XPR network", "testnet")
-  .action(async (options: { signedTransaction: string; network: string }) => {
-    const module = getChain(CLI_CHAIN);
-    const context = contextFor(options.network);
-    const descriptor = module.networks[options.network];
+  .option("--config <path>", "configuration file", DEFAULT_CONFIG_PATH)
+  .action(async (options: { agent: string; signedTransaction: string; config: string }) => {
     try {
-      const receipt = await module.broadcastSigned(
-        { endpoints: descriptor?.endpoints ?? [], chainId: context.chainId },
-        readJsonFile(options.signedTransaction),
-      );
-      print({ pushed: true, receipt });
+      const config = loadConfig(options.config);
+      // Broadcast is a daemon-authorized, audited op (#42): the CLI never
+      // submits client-side. The daemon checks the agent's broadcast capability
+      // and refuses if broadcasting is disabled.
+      const response = await broadcastViaDaemon({
+        socketPath: config.socketPath,
+        agent: options.agent,
+        context: chainContextOf(config),
+        signedTransaction: readJsonFile(options.signedTransaction),
+        token: readToken(join(config.tokenDir, `${options.agent}.token`)),
+      });
+      print(response);
+      if (response.status === "denied") process.exit(2);
+      if (response.status === "broadcast" && response.report.status !== "accepted") process.exit(2);
     } catch (error) {
       fail((error as Error).message);
     }

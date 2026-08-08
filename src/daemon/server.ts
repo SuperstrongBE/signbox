@@ -39,8 +39,10 @@ import { ValidationError } from "../core/errors.js";
 import {
   parseSignRequest,
   parseReadRequest,
+  parseBroadcastRequest,
   peekOp,
   type BroadcastReport,
+  type BroadcastResponseJson,
   type ReadResponseJson,
   type SignRequestJson,
   type SignResponseJson,
@@ -61,6 +63,19 @@ interface AuditContext {
   ruleIds?: string[];
 }
 
+/**
+ * Independently grantable capabilities (#42). Signing and broadcasting are
+ * SEPARATE authorizations: a sign-only agent can never trigger a network
+ * submission, and a broadcast-only principal can never reach the signer.
+ * Least privilege: broadcast is OFF unless a deployment explicitly grants it.
+ */
+export interface AgentCapabilities {
+  sign: boolean;
+  broadcast: boolean;
+}
+
+const DEFAULT_CAPABILITIES: AgentCapabilities = { sign: true, broadcast: false };
+
 export interface AgentRuntime {
   agent: string;
   permission: string;
@@ -71,6 +86,12 @@ export interface AgentRuntime {
   /** Rotating local token (§12.3). Stored as a Buffer for constant-time compare. */
   token: Buffer;
   key: KeyHandle;
+  /**
+   * Per-agent capabilities (#42). Omitted → sign-only (broadcast denied): a
+   * daemon-wide broadcaster must NEVER silently turn a sign-only agent into a
+   * sign-and-broadcast one.
+   */
+  capabilities?: AgentCapabilities;
 }
 
 export interface DaemonConfig {
@@ -363,11 +384,14 @@ export class SignBoxDaemon {
    * NEVER throws: every failure maps to a denied response; an audit failure
    * never fails a decision.
    */
-  async handleRequest(line: string): Promise<SignResponseJson | ReadResponseJson> {
+  async handleRequest(line: string): Promise<SignResponseJson | ReadResponseJson | BroadcastResponseJson> {
     // Read-only ops (whoami/query) share the socket and token auth but never
     // touch policy, quota, or the signer. Dispatch them before the sign path.
     const op = peekOp(line);
-    if (op !== "sign") return this.handleReadRequest(line);
+    if (op === "whoami" || op === "query") return this.handleReadRequest(line);
+    // Standalone broadcast (#42): submit an already-signed tx. Separate
+    // capability, separate audit, and NO path to the signer — handled apart.
+    if (op === "broadcast") return this.handleBroadcastRequest(line);
 
     const auditCtx: AuditContext = { agent: "unknown", contracts: [] };
     const response = await this.runDecision(line, auditCtx);
@@ -441,6 +465,119 @@ export class SignBoxDaemon {
     }
   }
 
+  /**
+   * Handle a STANDALONE broadcast request (#42): submit an already-signed
+   * transaction. This path has NO access to the signer, the policy engine, or
+   * the quota journal — it only relays opaque signed bytes to the chain, gated
+   * by the agent's independent `broadcast` capability. Authenticated by the
+   * same rotating token, anti-replayed, chain-pinned (INV-013), and audited as
+   * its own decision. NEVER throws (INV-010).
+   */
+  private async handleBroadcastRequest(line: string): Promise<BroadcastResponseJson> {
+    let request;
+    try {
+      request = parseBroadcastRequest(line);
+    } catch {
+      return {
+        requestId: "unknown",
+        status: "denied",
+        code: "SCHEMA_INVALID",
+        safeReason: "request does not match the expected schema",
+      };
+    }
+
+    const deny = (code: DenyCode, safeReason: string): BroadcastResponseJson => {
+      const response: BroadcastResponseJson = { requestId: request.requestId, status: "denied", code, safeReason };
+      this.recordBroadcastAudit(request.agent, response);
+      return response;
+    };
+
+    try {
+      // Same authentication as signing: unknown agent and bad token are
+      // indistinguishable (the daemon never reveals which agents exist).
+      const runtime = this.agents.get(request.agent);
+      if (runtime === undefined || !constantTimeEquals(runtime.token, request.token)) {
+        return deny("UNAUTHENTICATED", "request could not be authenticated");
+      }
+      if (!runtime.enabled) return deny("AGENT_DISABLED", "agent is disabled");
+
+      const now = this.now();
+      const requestedAt = Date.parse(request.requestedAt);
+      const expiresAt = Date.parse(request.expiresAt);
+      if (
+        expiresAt <= now ||
+        requestedAt > now + this.cfg.maxClockSkewMs ||
+        expiresAt <= requestedAt ||
+        expiresAt - requestedAt > this.cfg.maxRequestTtlMs
+      ) {
+        return deny("REQUEST_EXPIRED", "request window is invalid or expired");
+      }
+
+      const nonceState = this.nonces.register(runtime.agent, request.nonce, expiresAt, now);
+      if (nonceState !== "ok") {
+        return deny("NONCE_REUSED", "nonce was already used or cannot be registered");
+      }
+
+      const { chain } = runtime;
+      if (
+        request.chain !== chain.chain ||
+        request.network !== chain.network ||
+        request.chainId !== chain.chainId
+      ) {
+        return deny("CHAIN_MISMATCH", "request chain does not match the agent configuration");
+      }
+
+      // Capability gate (#42): broadcasting is independent from signing. A
+      // broadcast-only principal reaches HERE, never the signer.
+      const capabilities = runtime.capabilities ?? DEFAULT_CAPABILITIES;
+      if (!capabilities.broadcast) {
+        return deny("CAPABILITY_DENIED", "agent is not permitted to broadcast");
+      }
+      if (this.deps.broadcaster === undefined) {
+        return deny("BROADCAST_UNAVAILABLE", "broadcasting is disabled on this daemon");
+      }
+
+      // Relay the opaque signed bytes to the chain. The standalone path
+      // reserves no daemon quota (quota: "none"): the transaction was already
+      // signed — and thus already policy-checked and quota-accounted — at sign
+      // time. Retry/duplicate/ambiguous handling lives inside the broadcaster.
+      const outcome = await this.deps.broadcaster.broadcast(request.signedTransaction);
+      const report: BroadcastReport =
+        outcome.status === "accepted"
+          ? { status: "accepted", receipt: outcome.receipt, quota: "none" }
+          : { status: outcome.status, reason: outcome.reason, quota: "none" };
+      const response: BroadcastResponseJson = { requestId: request.requestId, status: "broadcast", report };
+      this.recordBroadcastAudit(request.agent, response);
+      return response;
+    } catch {
+      // INV-010: no exception escapes as anything but a refusal.
+      return deny("INTERNAL_ERROR", "request processing failed");
+    }
+  }
+
+  private recordBroadcastAudit(agent: string, response: BroadcastResponseJson): void {
+    const audit = this.deps.audit;
+    if (audit === undefined) return;
+    try {
+      const entry: AuditEntryInput = {
+        requestId: response.requestId,
+        agent,
+        decision: response.status === "broadcast" ? "broadcast" : "denied",
+        // A signed blob is opaque here — no contract::action names to record.
+        contracts: [],
+        timestampMs: this.now(),
+      };
+      if (response.status === "broadcast") {
+        entry.broadcast = response.report.status;
+      } else {
+        entry.code = response.code;
+      }
+      audit.append(entry);
+    } catch {
+      /* auditing must never fail a decision */
+    }
+  }
+
   private recordAudit(response: SignResponseJson, auditCtx: AuditContext): void {
     const audit = this.deps.audit;
     if (audit === undefined) return;
@@ -456,6 +593,9 @@ export class SignBoxDaemon {
         entry.digest = response.transactionDigest;
         entry.policyVersion = response.policyVersion;
         if (auditCtx.ruleIds !== undefined) entry.ruleIds = auditCtx.ruleIds;
+        // Fused sign+broadcast (#42): record the submission outcome alongside
+        // the sign decision so the log distinguishes accepted/rejected/unknown.
+        if (response.broadcast !== undefined) entry.broadcast = response.broadcast.status;
       } else {
         entry.code = response.code;
         if (response.policyVersion !== undefined) entry.policyVersion = response.policyVersion;
@@ -499,6 +639,23 @@ export class SignBoxDaemon {
 
       if (!runtime.enabled) {
         return deny("AGENT_DISABLED", "agent is disabled");
+      }
+
+      // Capability gate (#42): signing and broadcasting are independent grants.
+      // A sign-only agent that asks to broadcast is DENIED — never silently
+      // signed, never silently submitted (no capability up- or down-grade).
+      // This runs before any nonce, quota, or signing is consumed.
+      const capabilities = runtime.capabilities ?? DEFAULT_CAPABILITIES;
+      if (!capabilities.sign) {
+        return deny("CAPABILITY_DENIED", "agent is not permitted to sign");
+      }
+      if (request.broadcast === true) {
+        if (!capabilities.broadcast) {
+          return deny("CAPABILITY_DENIED", "agent is not permitted to broadcast");
+        }
+        if (this.deps.broadcaster === undefined) {
+          return deny("BROADCAST_UNAVAILABLE", "broadcasting is disabled on this daemon");
+        }
       }
 
       // Validate the request window.
