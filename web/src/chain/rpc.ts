@@ -40,6 +40,54 @@ export async function getTableRows<T>(
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+export interface AntelopeAccount {
+  account_name: string;
+  permissions: {
+    perm_name: string;
+    parent: string;
+    required_auth: { threshold: number; keys: { key: string; weight: number }[] };
+  }[];
+}
+
+/**
+ * Read an account, pinning the endpoint's chain id first (#41): a lying or
+ * cross-chain endpoint must not feed a forged authority key into onboarding
+ * validation. Returns null when the account provably does not exist (used as
+ * the stale/replay guard); throws on an unreachable/unverifiable chain.
+ */
+export async function getAccount(
+  endpoints: string[],
+  chainId: string,
+  name: string,
+): Promise<AntelopeAccount | null> {
+  let lastError: unknown = new Error("no endpoint configured");
+  for (const endpoint of endpoints) {
+    const base = endpoint.replace(/\/$/, "");
+    try {
+      const info = await fetch(`${base}/v1/chain/get_info`, { method: "POST" });
+      if (!info.ok) throw new Error(`${endpoint} get_info ${info.status}`);
+      const chain = (await info.json()) as { chain_id?: string };
+      if (chain.chain_id !== chainId) throw new Error(`${endpoint} serves another chain`);
+
+      const res = await fetch(`${base}/v1/chain/get_account`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ account_name: name }),
+      });
+      if (res.ok) return (await res.json()) as AntelopeAccount;
+      // A missing account is a definitive answer, not an endpoint failure.
+      const body = await res.text();
+      if (res.status === 500 && /unknown key|account_query_exception|does not exist/i.test(body)) {
+        return null;
+      }
+      throw new Error(`${endpoint} get_account ${res.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 /** One row of the SignBox contract's `policies` table (spec §7.1). */
 export interface PolicyRow {
   agent: string;
